@@ -1,0 +1,1 @@
+This is a public repository used to host an audio file about AI-READI survey data element harmonization process.
