@@ -24,13 +24,17 @@ Decision and rule tables (all in `hive_metastore.ehr_union_clean_metrics`):
 and for Part C `unit_factors`, `unit_analytes`, `unit_analyte_bridges`,
 `canonical_unit_rules`, `unit_relabel_rules`, `unit_test_units`,
 `unit_test_analytes`, `unit_conversion_decisions`, `unit_conversion_medians`,
-plus the view `measurement_unit_keyed`.
+plus the view `measurement_unit_keyed`; for Part D `unit_no_range_rules`,
+`unit_no_range_decisions`, and the views `unit_no_range_records`,
+`unit_no_range_evidence`.
 
 ## Notebooks (SQL files)
 
 - [unit_inference_range_groups.sql](unit_inference_range_groups.sql): Part A
 - [unit_inference_with_source_value_but_no_unit_concept.sql](unit_inference_with_source_value_but_no_unit_concept.sql): Part B
 - [unit_conversion.sql](unit_conversion.sql): Part C (conversion to canonical units)
+- [unit_inference_no_unit_no_range.sql](unit_inference_no_unit_no_range.sql): Part D
+  (no unit string, no reference range), written, not yet run
 
 ## Done
 
@@ -97,8 +101,12 @@ Numeric records after Part C: 5,949,036 in canonical unit, 33,039 unitless,
 
 1. **No unit string, no reference range:** 1,066,511 numeric records. Mostly
    flowsheet data (ETCO2, pain scores, tidal volume, MAP). Probably many
-   unitless scores and single-unit vitals. Needs its own sizing pass. Records
-   that get a unit later need Part C re-run (it's rerunnable).
+   unitless scores and single-unit vitals. Part D notebook is written but not
+   run: sizing (17b, 17c), name rules (`unit_no_range_rules`, two starter
+   rows for scores and pain scales), decisions per (partner, test) copying
+   units from labeled records of the same test with Part A's factor-2 median
+   check, then a MERGE. Next: run 17-17c, write name rules from 17c, run 19,
+   review 19a-19c, apply 20, re-run Part C from cell 14.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8
      ratios, "HDL/total" that is total/HDL, "total T4" that is free T4, an
