@@ -108,7 +108,7 @@ records and never uses its own output as evidence.
 | explicit / unitless / not_a_quantity / needs_review | name rule (not_a_quantity: codes, IDs, admin fields such as EKG impression codes, HLA alleles, case numbers) |
 | partner_unit / dataset_unit / unitless | copied from labeled or unitless records of the same test, same partner first; group median within a factor of 2 of the candidate's |
 | source_name | concept 0, Part A's source-name rules (no median check, so name rules override the wrong ones) |
-| value_split | group holds two units; each record gets the unit of its value band (`unit_no_range_value_rules`), records between bands get needs_review |
+| value_split | group holds two units (or a unit and a different test); each record gets the unit and method of its value band (`unit_no_range_value_rules`) |
 
 Result: 510,414 explicit, 469,711 unitless, 73,887 copied, 365 source_name,
 3,794 not_a_quantity, 6,482 suspect_concept (HDL/total), 1,764 needs_review.
@@ -120,20 +120,23 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
 
-1. **Part D leftovers** (needs_review, 1,764 records). Code written, not yet
-   run:
+1. **Part D leftovers** (needs_review, 1,764 records). Rules written and
+   reviewed (19a: down to 1,099); MERGE and Part C re-run not yet done:
    - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83):
-     value_split, bands in cell 18c (Cel < 45 <= gap < 80 <= [degF];
-     mg/mg < 15 <= gap < 30 <= mg/g). Check 19d.
+     value_split, bands in cell 18c. 19d showed no records in the gaps.
    - Systemic vascular resistance and its index (513): rules 41/42,
      `dyn.sec/cm5` (32703) and `dyn.s/cm5/m2` (720841). OMOP spells the two
      inconsistently. The 5 Part B records with unit string
-     `dynes-sec/cm5/m2` have concept 0 and could map to 720841.
+     `dynes-sec/cm5/m2` have concept 0 and could map to 720841. SVRI has a
+     low tail (p05 194).
    - Treadmill MPH (28): no rule. OMOP UCUM has miles but no mile per hour.
-   - Residual volume/Total capacity (438): review 19e. Median 6.54 is close
-     to TLC in liters, so the field may hold TLC.
-   - RAST classes: rule 43 (unitless) on "radioallergosorbent"; test names
-     not checked, see 18b.
+   - Residual volume/Total capacity (438): two records per exam, RV/TLC %
+     and TLC in L (19f: 100 * RV / low = high in 214 of 214 exams).
+     value_split at 8: below is suspect_concept, 8 and up is %.
+   - RAST classes: rule 43, unitless (values 0 and 4).
+   - Not yet ruled: Creatinine/Protein [Mass Ratio] in Urine (94, median
+     235, looks like protein/creatinine mg/g), Physical findings of Skin
+     (69, integers 1-10), Aldosterone/Renin ratio (33).
    - Log viral loads (left unmapped, as in Part B) and one-offs remain.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8

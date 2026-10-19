@@ -19,9 +19,9 @@
 --   4. source_name          concept 0 only: Part A's unit_source_name_rules
 --   5. needs_review
 -- Method names are Part A's; range_high IS NULL tells Part D records apart.
--- value_split groups hold two units; the MERGE (20) gives each record the
--- unit of the value band it falls in (unit_no_range_value_rules), and
--- records between bands get needs_review.
+-- value_split groups hold two units, or a unit and a different test; the
+-- MERGE (20) gives each record the unit and method of the value band it
+-- falls in (unit_no_range_value_rules).
 --
 -- Records in scope are picked by their RAW columns (no unit string, no unit
 -- concept, no range_high), never by inferred_unit_concept_id, so rerunning
@@ -208,7 +208,8 @@ SELECT * FROM VALUES
   -- Part D leftovers. SVR codes from the 17d lookup.
   (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s/cm5/m2', 'normal 1970-2390'),
   (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.sec/cm5', 'normal 800-1200'),
-  (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6')
+  (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6'),
+  (44, '(?i)^residual volume/total capacity',               'value_split', NULL, 'RV/TLC % paired with TLC in L (19f)')
 AS t(priority, test_pattern, rule, unit_code, note);
 
 -- 18a. Check: explicit rules without a valid UCUM code, and the reverse
@@ -241,19 +242,25 @@ ORDER BY ru.priority, t.n DESC;
 
 -- 18c. Value bands for value_split tests: value_min <= value < value_max,
 --      NULL meaning unbounded. A test's bands must cover every value with
---      no overlap; a band with no unit_code sends its records to
---      needs_review. Each value_split test must match one test_pattern only.
+--      no overlap. method is value_split for a band with a unit, otherwise
+--      needs_review or suspect_concept. Each value_split test must match
+--      one test_pattern only.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules AS
 SELECT * FROM VALUES
   -- body temperature: 45 Cel is beyond survivable, 80 [degF] is deep hypothermia
-  ('(?i)^body temperature$',             CAST(NULL AS DOUBLE), 45D,  'Cel',    NULL),
-  ('(?i)^body temperature$',             45D,  80D,  CAST(NULL AS STRING),     'fits neither'),
-  ('(?i)^body temperature$',             80D,  NULL, '[degF]', NULL),
+  ('(?i)^body temperature$',             CAST(NULL AS DOUBLE), 45D,  'Cel',    'value_split',  CAST(NULL AS STRING)),
+  ('(?i)^body temperature$',             45D,  80D,  NULL,     'needs_review', 'fits neither'),
+  ('(?i)^body temperature$',             80D,  NULL, '[degF]', 'value_split',  NULL),
   -- protein/creatinine: mg/mg runs 0.05-10; mg/g under 30 is implausibly low
-  ('(?i)^protein/creatinine ratio, exte', NULL, 15D,  'mg/mg',  NULL),
-  ('(?i)^protein/creatinine ratio, exte', 15D,  30D,  NULL,     'fits neither'),
-  ('(?i)^protein/creatinine ratio, exte', 30D,  NULL, 'mg/g',   NULL)
-AS t(test_pattern, value_min, value_max, unit_code, note);
+  ('(?i)^protein/creatinine ratio, exte', NULL, 15D,  'mg/mg',  'value_split',  NULL),
+  ('(?i)^protein/creatinine ratio, exte', 15D,  30D,  NULL,     'needs_review', 'fits neither'),
+  ('(?i)^protein/creatinine ratio, exte', 30D,  NULL, 'mg/g',   'value_split',  NULL),
+  -- RV/TLC: each exam has two records; the low one is TLC in L
+  -- (100 * RV / low = high in all 214 exams, 19f). TLC max 7.91; the six
+  -- ratios under 8 pair with RV of 0.02-0.2 L, so they're bad data anyway.
+  ('(?i)^residual volume/total capacity', NULL, 8D,   NULL,     'suspect_concept', 'TLC in L under the RV/TLC concept'),
+  ('(?i)^residual volume/total capacity', 8D,   NULL, '%',      'value_split',  NULL)
+AS t(test_pattern, value_min, value_max, unit_code, method, note);
 
 -- 18d. Check: should be empty. Bad codes, gaps, overlaps, open ends.
 WITH v AS (
@@ -269,6 +276,9 @@ WITH v AS (
 )
 SELECT * FROM (
   SELECT CASE WHEN v.unit_code IS NOT NULL AND v.ucum_concept_id IS NULL THEN 'not a UCUM code'
+              WHEN (v.method = 'value_split') <> (v.unit_code IS NOT NULL)
+                OR v.method NOT IN ('value_split', 'needs_review', 'suspect_concept')
+                                                                         THEN 'method and unit_code disagree'
               WHEN v.rn = 1 AND v.value_min IS NOT NULL                  THEN 'first band has a lower bound'
               WHEN v.rn = v.n_bands AND v.value_max IS NOT NULL          THEN 'last band has an upper bound'
               WHEN v.rn > 1 AND NOT (v.value_min <=> v.prev_max)         THEN 'gap or overlap with previous band'
@@ -443,7 +453,7 @@ ORDER BY n DESC;
 -- 19d. Review: value_split records by band, as the MERGE (20) will assign
 --      them. Each band's medians should look like its unit; band NULL means
 --      the test matched no band pattern (18c) and goes to needs_review.
-SELECT r.data_partner_id, d.test_name, v.value_min, v.value_max, v.unit_code,
+SELECT r.data_partner_id, d.test_name, v.value_min, v.value_max, v.unit_code, v.method,
        COUNT(*) AS n, min(r.value_as_number) AS min_value,
        percentile_approx(r.value_as_number, 0.5) AS median, max(r.value_as_number) AS max_value
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_records r
@@ -455,7 +465,7 @@ LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules v
   ON  d.test_name RLIKE v.test_pattern
   AND (v.value_min IS NULL OR r.value_as_number >= v.value_min)
   AND (v.value_max IS NULL OR r.value_as_number <  v.value_max)
-GROUP BY 1, 2, 3, 4, 5
+GROUP BY 1, 2, 3, 4, 5, 6
 ORDER BY 1, 2, 3 NULLS FIRST;
 
 -- COMMAND ----------
@@ -507,14 +517,13 @@ ORDER BY person_id, measurement_date;
 -- 20. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id
 --     is cleared so it never disagrees with harmonized_value_as_number;
 --     re-run Part C from cell 14 afterwards to fill both.
---     value_split groups get one source row per band (18c), matched by value;
---     bands with no unit, or a group with no bands, become needs_review.
+--     value_split groups get one source row per band (18c), matched by value,
+--     and the band's method; a group with no bands becomes needs_review.
 MERGE INTO hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized t
 USING (
   SELECT d.data_partner_id, d.test_id, v.value_min, v.value_max,
          CASE WHEN d.unit_inference_method <> 'value_split' THEN d.unit_inference_method
-              WHEN v.unit_code IS NOT NULL                  THEN 'value_split'
-              ELSE 'needs_review'
+              ELSE COALESCE(v.method, 'needs_review')
          END AS unit_inference_method,
          COALESCE(vu.concept_id, d.inferred_unit_concept_id) AS inferred_unit_concept_id,
          COALESCE(v.unit_code, u.concept_code) AS unit_code
