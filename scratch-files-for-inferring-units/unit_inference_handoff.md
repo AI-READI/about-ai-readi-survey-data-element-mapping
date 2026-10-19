@@ -141,6 +141,25 @@ Numeric records after Parts A-D (cell 20a): 6,534,551 in canonical
 unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
+## Next step
+
+Siggie has imported A-D and run them in order, after Parts C and D were
+swapped and Part D became per partner. The run hasn't been verified yet.
+Before anything else, write `E_review_outputs.sql`: a read-only notebook
+(same Databricks source format) holding every check and review query whose
+output is needed to verify the run, in run order, one per cell. Each cell's
+comment should name the source cell it repeats and say what result to expect.
+Siggie runs it once and pastes the outputs back. Expected results:
+
+- the check cells (4b, 7b, 10b, 14a, 14d, 17e): empty
+- 15d: seven bands, including HDL/total reciprocal with 6,482 records
+- 19e: Body weight, partner 2084, `[lb_us]` -> `[oz_av]`, median about 80.7 kg
+- 20a: the counts above
+- 20b: partner 2084 `[lb_us]` kg median about 80.7 (it was 1,291 before the
+  partner relabel)
+
+Then the write-up (Not done #3).
+
 ## Not done
 
 1. **Part C leftovers** still needs_review (1,099 records): log viral
@@ -194,5 +213,8 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
   blocks, with a note saying which cells changed and that nothing else did.
 - Every query whose result needs looking at gets its own cell;
   table-building statements can share a cell.
+- When several outputs are needed from cells spread across notebooks, put
+  them in one review notebook (like `E_review_outputs.sql`) so Siggie runs
+  one file and pastes everything once.
 - Pattern for each step: build rules, run a check (should return no rows),
   build decisions, review, then apply with a rerunnable MERGE.
