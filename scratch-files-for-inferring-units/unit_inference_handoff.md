@@ -78,7 +78,12 @@ concept, or the measurement_source_value for concept 0.
 - `unit_relabel_rules` convert a unit as if it were another one. They cover
   mis-coded units (S/H used for seconds/hours, [foz_us] on weights, `deg` on
   temperature, `m2` on BMI, `mL/min` on eGFR) and a few labels the values
-  contradict (CEA "mg/dL"). A rule with no target blocks conversion.
+  contradict (CEA "mg/dL"). A rule with no target blocks conversion. A rule
+  can be limited to one partner: partner 2084's "Body weight" `[lb_us]`
+  records are ounces (raw median 2,847; partner 8469's pounds match its kg
+  records per person, cell 16c).
+- Decisions are per (partner, test, unit); the canonical unit is per test,
+  chosen across partners.
 - The canonical unit is the most common one (equivalent codes counted
   together), unless a name-pattern rule in `canonical_unit_rules` sets it
   (body weight kg, height cm, temperature Cel, HbA1c %, 24 h urine protein
@@ -120,13 +125,15 @@ values over 1 are total/HDL and get reciprocal; Part A's concept rule still
 marks that concept's Part A records suspect_concept. SVR is `dyn.sec/cm5` (32703) and SVR index `dyn.s/cm5/m2`
 (720841); OMOP spells the two inconsistently.
 
-Result: 510,927 explicit, 469,736 unitless, 73,887 copied, 365 source_name,
-3,794 not_a_quantity, 6,707 suspect_concept (HDL/total, TLC under RV/TLC),
-1,099 needs_review, 340 value_split. Part C re-run after Part D added no
-new no_conversion pairs.
+Result: 510,927 explicit, 476,218 unitless (6,482 of them reciprocal),
+73,887 copied, 365 source_name, 3,794 not_a_quantity, 225 suspect_concept
+(TLC under RV/TLC), 1,099 needs_review, 340 value_split.
 
-Numeric records after Parts A-D and the Part C re-run: 6,534,551 in canonical
-unit, 502,775 unitless, 3,191 with a unit but no conversion, 12,039 with no
+Run order is A, B, D, then C: Part D's apply clears canonical_unit_concept_id
+and the harmonized value on its records, and Part C fills them back in.
+
+Numeric records after Parts A-D and Part C (16a): 6,534,551 in canonical
+unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
@@ -149,8 +156,6 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
      with median 4.25, so RBC counts, not reticulocytes (about 0.06)
    - Expiratory minute volume: `L` and `l` rows, 869 each with the same
      median, look like duplicates
-   - Body weight: [lb_us] records have median 118 kg, against 90 kg for
-     records in kg ("Body weight Measured" matches)
    - Tidal volume setting: mL and mL/kg (labeled kg) under one concept
 3. **Write-up for the boss.**
 
@@ -179,8 +184,7 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 - Notebook files are in Databricks source format so Siggie can import them
   (Workspace > Import > File) without splitting cells by hand: first line
   `-- Databricks notebook source`, cells separated by
-  `-- COMMAND ----------`, no `%sql` lines. Part D uses this; the Part C file
-  still uses `%sql` cell starts and doesn't import.
+  `-- COMMAND ----------`, no `%sql` lines. Parts A, C and D use this.
 - After the first import, changed cells come in chat as paste-ready `%sql`
   blocks, with a note saying which cells changed and that nothing else did.
 - Every query whose result needs looking at gets its own cell;

@@ -1,4 +1,4 @@
-%sql
+-- Databricks notebook source
 -- Unit inference, Part C: conversion to a canonical unit per test.
 -- Fills canonical_unit_concept_id and harmonized_value_as_number for every
 -- numeric record with an effective unit
@@ -21,17 +21,20 @@
 --                  HbA1c % <-> mmol/mol is an affine bridge.
 --   unit_relabel_rules  units whose label is wrong (mis-coded, or values
 --                  clearly in another unit): convert as treat_as_code instead.
+--                  A rule can be limited to one partner.
 --   canonical unit the most common unit for the test (counting equivalent
---                  codes together), unless canonical_unit_rules says otherwise.
+--                  codes together, across partners), unless
+--                  canonical_unit_rules says otherwise.
 -- Conversion: canonical = slope * value_as_number + intercept, per
--- (test, unit), in unit_conversion_decisions.
+-- (partner, test, unit), in unit_conversion_decisions.
 -- Methods written: identity, same_base, analyte_bridge, no_conversion,
 -- blocked (relabeled_as says when a relabel rule applied).
 -- canonical_unit_concept_id is set only where harmonized_value_as_number is,
 -- so a non-null harmonized value is always in canonical_unit_concept_id.
 --
--- Each %sql block is one cell. Blocks that end in a SELECT show its result;
--- the others build tables and show nothing.
+-- Run after Parts A, B and D (Part D's apply clears canonical_unit_concept_id
+-- and the harmonized value on its records). Run every cell in order; cells
+-- that end in a SELECT show a result, the others build tables.
 
 
 -- ===== C1. Hand-written rule tables =====
@@ -245,10 +248,12 @@ SELECT * FROM VALUES
 AS t(test_pattern, unit_code, note);
 
 -- 13d. Relabels: convert unit_code as if it were treat_as_code, on tests
---      whose name matches test_pattern (NULL = every test). A rule with a
---      pattern wins over one without. treat_as_code NULL = don't convert.
+--      whose name matches test_pattern (NULL = every test) and, for the
+--      partner-specific rules at the end, only for data_partner_id. A
+--      partner rule wins over one with a pattern, and that over one with
+--      neither. treat_as_code NULL = don't convert.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_relabel_rules AS
-SELECT * FROM VALUES
+SELECT *, CAST(NULL AS INT) AS data_partner_id FROM VALUES
   -- mis-coded units
   (NULL,                        'S',        's',        'UCUM S is siemens; used for seconds'),
   (NULL,                        'H',        'h',        'UCUM H is henry; used for hours'),
@@ -279,10 +284,15 @@ SELECT * FROM VALUES
   -- don't convert: no relabel makes the values fit
   ('(?i)^mycoplasma',           '[U]/mL',   NULL,       'median 770 vs 0.27 [U]/L'),
   ('^Creatinine .Mass/volume. in Urine$', 'ug/L', NULL, 'median 2.5')
-AS t(test_pattern, unit_code, treat_as_code, note);
+AS t(test_pattern, unit_code, treat_as_code, note)
+UNION ALL
+-- one partner's label is wrong; other partners' records in the unit are fine
+SELECT * FROM VALUES
+  ('^Body weight$',             '[lb_us]',  '[oz_av]',  'median 2847 (80.7 kg as ounces); 8469 lb is fine (16c)', 2084)
+AS t(test_pattern, unit_code, treat_as_code, note, data_partner_id);
 
 
-%sql
+-- COMMAND ----------
 -- 13e. CHECK (should return no rows): bad or duplicate codes, duplicate bridges.
 --      Paste any rows this returns; I'll correct them.
 WITH codes AS (
@@ -310,7 +320,7 @@ FROM hive_metastore.ehr_union_clean_metrics.unit_analyte_bridges
 GROUP BY analyte, from_base, to_base HAVING COUNT(*) > 1;
 
 
-%sql
+-- COMMAND ----------
 -- ===== C2. Tests and their units =====
 
 -- 14. Keyed view: numeric records in scope, with test_id and effective unit.
@@ -326,17 +336,17 @@ FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized
 WHERE value_as_number IS NOT NULL
   AND COALESCE(unit_inference_method, '') <> 'suspect_concept';
 
--- 14a. One row per (test, effective unit)
+-- 14a. One row per (partner, test, effective unit)
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_test_units AS
-SELECT k.test_id,
+SELECT k.data_partner_id, k.test_id,
        COALESCE(mc.concept_name, substr(k.test_id, 5)) AS test_name,
        k.unit_concept_id, u.concept_code AS unit_code, k.n
 FROM (
-  SELECT test_id, max(measurement_concept_id) AS measurement_concept_id,
+  SELECT data_partner_id, test_id, max(measurement_concept_id) AS measurement_concept_id,
          effective_unit_concept_id AS unit_concept_id, COUNT(*) AS n
   FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed
   WHERE effective_unit_concept_id IS NOT NULL
-  GROUP BY test_id, effective_unit_concept_id
+  GROUP BY data_partner_id, test_id, effective_unit_concept_id
 ) k
 LEFT JOIN omop_vocab.concept mc ON mc.concept_id = NULLIF(k.measurement_concept_id, 0)
 LEFT JOIN omop_vocab.concept u  ON u.concept_id = k.unit_concept_id;
@@ -351,18 +361,20 @@ JOIN hive_metastore.ehr_union_clean_metrics.unit_analytes a
 GROUP BY t.test_id;
 
 
-%sql
+-- COMMAND ----------
 -- 14c. Review: analyte assignments, with each test's units.
 --      Look for tests that got the wrong analyte.
 SELECT a.analyte, t.test_name, SUM(t.n) AS n,
        array_join(collect_list(concat(t.unit_code, ' (', CAST(t.n AS STRING), ')')), ', ') AS units
 FROM hive_metastore.ehr_union_clean_metrics.unit_test_analytes a
-JOIN hive_metastore.ehr_union_clean_metrics.unit_test_units t ON t.test_id = a.test_id
+JOIN (SELECT test_id, test_name, unit_code, SUM(n) AS n
+      FROM hive_metastore.ehr_union_clean_metrics.unit_test_units
+      GROUP BY 1, 2, 3) t ON t.test_id = a.test_id
 GROUP BY a.analyte, t.test_id, t.test_name
 ORDER BY a.analyte, n DESC;
 
 
-%sql
+-- COMMAND ----------
 -- 14d. Review: tests each canonical-unit rule hits. Each test should appear
 --      once, under the rule you meant.
 SELECT r.test_pattern, r.unit_code, t.test_name, SUM(t.n) AS n,
@@ -374,10 +386,11 @@ GROUP BY r.test_pattern, r.unit_code, t.test_id, t.test_name
 ORDER BY r.test_pattern, n DESC;
 
 
-%sql
+-- COMMAND ----------
 -- ===== C3. Conversion decisions =====
 
--- 15. Decisions: one row per (test, effective unit)
+-- 15. Decisions: one row per (partner, test, effective unit). The canonical
+--     unit is per test, chosen across partners.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions AS
 WITH relabeled AS (
   -- conv_code: the code each unit is converted as (NULL when blocked)
@@ -385,14 +398,19 @@ WITH relabeled AS (
          CASE WHEN rl.has_rule IS NULL THEN tu.unit_code ELSE rl.relabeled_as END AS conv_code
   FROM hive_metastore.ehr_union_clean_metrics.unit_test_units tu
   LEFT JOIN (
-    SELECT t.test_id, t.unit_concept_id, TRUE AS has_rule,
-           min_by(r.treat_as_code, CASE WHEN r.test_pattern IS NULL THEN 1 ELSE 0 END) AS relabeled_as
+    SELECT t.data_partner_id, t.test_id, t.unit_concept_id, TRUE AS has_rule,
+           min_by(r.treat_as_code, CASE WHEN r.data_partner_id IS NOT NULL THEN 0
+                                        WHEN r.test_pattern IS NOT NULL THEN 1
+                                        ELSE 2 END) AS relabeled_as
     FROM hive_metastore.ehr_union_clean_metrics.unit_test_units t
     JOIN hive_metastore.ehr_union_clean_metrics.unit_relabel_rules r
       ON  r.unit_code = t.unit_code
       AND (r.test_pattern IS NULL OR t.test_name RLIKE r.test_pattern)
-    GROUP BY 1, 2
-  ) rl ON rl.test_id = tu.test_id AND rl.unit_concept_id = tu.unit_concept_id
+      AND (r.data_partner_id IS NULL OR r.data_partner_id = t.data_partner_id)
+    GROUP BY 1, 2, 3
+  ) rl ON  rl.data_partner_id = tu.data_partner_id
+       AND rl.test_id = tu.test_id
+       AND rl.unit_concept_id = tu.unit_concept_id
 ),
 cls AS (
   -- equivalent codes (same base, slope, intercept) count as one unit
@@ -455,7 +473,7 @@ pairs AS (
 )
 -- unit -> base -> (bridge) -> canonical:
 --   canonical = (b_slope * (u_slope * x + u_intercept) + b_intercept - k_intercept) / k_slope
-SELECT test_id, test_name, unit_concept_id, unit_code, relabeled_as, n, analyte,
+SELECT data_partner_id, test_id, test_name, unit_concept_id, unit_code, relabeled_as, n, analyte,
        canonical_unit_concept_id, canonical_unit_code, canonical_source,
        CASE WHEN blocked                         THEN 'blocked'
             WHEN conv_code = canonical_unit_code THEN 'identity'
@@ -472,74 +490,120 @@ SELECT test_id, test_name, unit_concept_id, unit_code, relabeled_as, n, analyte,
 FROM pairs;
 
 
-%sql
+-- COMMAND ----------
 -- 15a. Review: summary
 SELECT conversion_method, COUNT(*) AS n_pairs, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
 GROUP BY 1 ORDER BY n_records DESC;
 
 
-%sql
+-- COMMAND ----------
 -- 15b. Review: canonical unit for every test that has more than one unit.
 --      Look for canonical units you'd not choose; add them to 13c.
 SELECT test_name, canonical_unit_code, canonical_source, SUM(n) AS n,
-       array_join(collect_list(concat_ws(' ', unit_code, concat('->', relabeled_as),
+       array_join(collect_list(concat_ws(' ', concat(CAST(data_partner_id AS STRING), ':'),
+                                         unit_code, concat('->', relabeled_as),
                                          CAST(n AS STRING), conversion_method)), '; ') AS units
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
 GROUP BY test_id, test_name, canonical_unit_code, canonical_source
-HAVING COUNT(*) > 1
+HAVING COUNT(DISTINCT unit_concept_id) > 1
 ORDER BY n DESC;
 
 
-%sql
--- 15c. Medians per (test, unit): median raw and converted value vs the median of
---        records originally labeled with the canonical unit.
+-- COMMAND ----------
+-- 15c. Medians per (partner, test, unit): median raw and converted value vs
+--        the median of the test's records labeled with the canonical unit
+--        (all partners). Relabeled units are listed even when the label is
+--        the canonical code.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_conversion_medians AS
-WITH per_unit AS (
-  SELECT d.test_id, d.test_name, d.unit_code, d.relabeled_as, d.canonical_unit_code,
-         d.conversion_method, d.analyte, COUNT(*) AS n,
-         percentile_approx(k.value_as_number, 0.5) AS median_raw,
-         percentile_approx(d.conversion_slope * k.value_as_number + d.conversion_intercept, 0.5)
-           AS median_converted
+WITH rec AS (
+  SELECT d.*, k.value_as_number
   FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
   JOIN hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions d
-    ON  d.test_id = k.test_id
+    ON  d.data_partner_id = k.data_partner_id
+    AND d.test_id = k.test_id
     AND d.unit_concept_id = k.effective_unit_concept_id
-  GROUP BY 1, 2, 3, 4, 5, 6, 7
+),
+per_unit AS (
+  SELECT data_partner_id, test_id, test_name, unit_code, relabeled_as, canonical_unit_code,
+         conversion_method, analyte, COUNT(*) AS n,
+         percentile_approx(value_as_number, 0.5) AS median_raw,
+         percentile_approx(conversion_slope * value_as_number + conversion_intercept, 0.5)
+           AS median_converted
+  FROM rec
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+),
+canon AS (
+  SELECT test_id, percentile_approx(value_as_number, 0.5) AS canonical_median
+  FROM rec
+  WHERE unit_code = canonical_unit_code AND relabeled_as IS NULL
+  GROUP BY 1
 )
-SELECT p.*, c.median_raw AS canonical_median,
-       p.median_converted / NULLIF(c.median_raw, 0) AS ratio
+SELECT p.*, c.canonical_median,
+       p.median_converted / NULLIF(c.canonical_median, 0) AS ratio
 FROM per_unit p
-LEFT JOIN per_unit c
-  ON  c.test_id = p.test_id
-  AND c.unit_code = c.canonical_unit_code
-WHERE p.unit_code <> p.canonical_unit_code;
+LEFT JOIN canon c ON c.test_id = p.test_id
+WHERE p.unit_code <> p.canonical_unit_code OR p.relabeled_as IS NOT NULL;
 
 
-%sql
+-- COMMAND ----------
 -- 15d. Review: (test, unit) pairs with no conversion to the canonical unit.
 --      Compare median_raw with canonical_median to judge what the unit really is.
-SELECT test_name, unit_code, n, median_raw, canonical_unit_code, canonical_median, analyte
+SELECT test_name, data_partner_id, unit_code, n, median_raw, canonical_unit_code, canonical_median, analyte
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_medians
 WHERE conversion_method = 'no_conversion'
 ORDER BY n DESC;
 
 
-%sql
+-- COMMAND ----------
 -- 15e. Review: do converted values look like canonical-unit values?
 --      ratio far from 1 = wrong factor, wrong analyte, or the source unit
 --      label is wrong (add a relabel rule, 13d). Most extreme first.
-SELECT test_name, unit_code, relabeled_as, canonical_unit_code, conversion_method, n,
+SELECT test_name, data_partner_id, unit_code, relabeled_as, canonical_unit_code, conversion_method, n,
        median_raw, median_converted, canonical_median, ratio
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_medians
 WHERE conversion_method <> 'no_conversion' AND canonical_median IS NOT NULL
 ORDER BY greatest(abs(ratio), abs(try_divide(1, ratio))) DESC NULLS FIRST;
 
 
-%sql
--- 15f. Review: body weight by test, partner and unit. "Body weight" in
---      [lb_us] converts to median 118 kg vs 90 kg for kg records; this
---      shows whether that's one partner and whether raw values look like lb.
+-- COMMAND ----------
+-- ===== C4. Apply conversion decisions =====
+
+-- 16. Apply. Rerunnable. Keys are the same as in the view (14).
+MERGE INTO hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized t
+USING hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions d
+ON  d.data_partner_id = t.data_partner_id
+AND d.test_id = CASE WHEN COALESCE(t.measurement_concept_id, 0) = 0
+                     THEN concat('src:', t.measurement_source_value)
+                     ELSE CAST(t.measurement_concept_id AS STRING)
+                END
+AND d.unit_concept_id = COALESCE(NULLIF(t.unit_concept_id, 0), t.inferred_unit_concept_id)
+AND t.value_as_number IS NOT NULL
+AND COALESCE(t.unit_inference_method, '') <> 'suspect_concept'
+WHEN MATCHED THEN UPDATE SET
+  t.canonical_unit_concept_id  = CASE WHEN d.conversion_slope IS NOT NULL
+                                      THEN d.canonical_unit_concept_id END,
+  t.harmonized_value_as_number = d.conversion_slope * t.value_as_number + d.conversion_intercept;
+
+
+-- COMMAND ----------
+-- 16a. Review: numeric records by harmonization status
+SELECT CASE WHEN canonical_unit_concept_id IS NOT NULL  THEN 'in canonical unit'
+            WHEN harmonized_value_as_number IS NOT NULL THEN 'unitless'
+            WHEN COALESCE(NULLIF(unit_concept_id, 0), inferred_unit_concept_id) IS NOT NULL
+                                                        THEN 'has unit, no conversion'
+            ELSE 'no unit'
+       END AS status,
+       COUNT(*) AS n
+FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized
+WHERE value_as_number IS NOT NULL
+GROUP BY 1 ORDER BY n DESC;
+
+
+-- COMMAND ----------
+-- 16b. Review: stored body weights by test, partner and unit (run after 16).
+--      kg_pct medians should all be near 80-90 kg. Partner 2084's [lb_us]
+--      records are ounces (raw median 2847), relabeled in 13d.
 SELECT COALESCE(mc.concept_name, k.measurement_source_value) AS test_name,
        k.data_partner_id, u.concept_code AS unit, k.unit_source_value,
        k.unit_inference_method, COUNT(*) AS n,
@@ -553,8 +617,8 @@ GROUP BY 1, 2, 3, 4, 5
 ORDER BY 1, 2, n DESC;
 
 
-%sql
--- 15g. Review: people with "Body weight" records in both kg and [lb_us].
+-- COMMAND ----------
+-- 16c. Review: people with "Body weight" records in both kg and [lb_us].
 --      ratio = person's median converted lb record / median kg record.
 --      Near 1: the lb records are fine and the gap is who gets weighed in
 --      lb. Near 1.3 for everyone: the lb label or factor is wrong.
@@ -575,36 +639,3 @@ FROM w lb
 JOIN w kg ON kg.person_id = lb.person_id AND kg.unit = 'kg'
 WHERE lb.unit = '[lb_us]'
 GROUP BY 1, 2;
-
-
-%sql
--- ===== C4. Apply conversion decisions =====
-
--- 16. Apply. Rerunnable. Keys are the same as in the view (14).
-MERGE INTO hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized t
-USING hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions d
-ON  d.test_id = CASE WHEN COALESCE(t.measurement_concept_id, 0) = 0
-                     THEN concat('src:', t.measurement_source_value)
-                     ELSE CAST(t.measurement_concept_id AS STRING)
-                END
-AND d.unit_concept_id = COALESCE(NULLIF(t.unit_concept_id, 0), t.inferred_unit_concept_id)
-AND t.value_as_number IS NOT NULL
-AND COALESCE(t.unit_inference_method, '') <> 'suspect_concept'
-WHEN MATCHED THEN UPDATE SET
-  t.canonical_unit_concept_id  = CASE WHEN d.conversion_slope IS NOT NULL
-                                      THEN d.canonical_unit_concept_id END,
-  t.harmonized_value_as_number = d.conversion_slope * t.value_as_number + d.conversion_intercept;
-
-
-%sql
--- 16a. Review: numeric records by harmonization status
-SELECT CASE WHEN canonical_unit_concept_id IS NOT NULL  THEN 'in canonical unit'
-            WHEN harmonized_value_as_number IS NOT NULL THEN 'unitless'
-            WHEN COALESCE(NULLIF(unit_concept_id, 0), inferred_unit_concept_id) IS NOT NULL
-                                                        THEN 'has unit, no conversion'
-            ELSE 'no unit'
-       END AS status,
-       COUNT(*) AS n
-FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized
-WHERE value_as_number IS NOT NULL
-GROUP BY 1 ORDER BY n DESC;
