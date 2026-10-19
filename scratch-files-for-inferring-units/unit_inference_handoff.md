@@ -109,12 +109,15 @@ records and never uses its own output as evidence.
 | partner_unit / dataset_unit / unitless | copied from labeled or unitless records of the same test, same partner first; group median within a factor of 2 of the candidate's |
 | source_name | concept 0, Part A's source-name rules (no median check, so name rules override the wrong ones) |
 | value_split | group holds two units (or a unit and a different test); each record gets the unit and method of its value band (`unit_no_range_value_rules`) |
+| reciprocal | unitless, stored inverted: harmonized_value_as_number = 1 / value_as_number. "Cholesterol in HDL/Cholesterol.total" values over 1, which are total/HDL |
 
 value_split covers body temperature (Cel / [degF]), "Protein/Creatinine
 Ratio, Exte" (mg/mg / mg/g) and "Residual volume/Total capacity". That last
 test holds two records per exam: RV/TLC in % and TLC in L (100 * RV / low =
 high in all 214 exams, cell 19f). Values under 8 are TLC and get
-suspect_concept. SVR is `dyn.sec/cm5` (32703) and SVR index `dyn.s/cm5/m2`
+suspect_concept. "Cholesterol in HDL/Cholesterol.total" (concept 3023884)
+values over 1 are total/HDL and get reciprocal; Part A's concept rule still
+marks that concept's Part A records suspect_concept. SVR is `dyn.sec/cm5` (32703) and SVR index `dyn.s/cm5/m2`
 (720841); OMOP spells the two inconsistently.
 
 Result: 510,927 explicit, 469,736 unitless, 73,887 copied, 365 source_name,
@@ -137,7 +140,7 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
    `dynes-sec/cm5/m2` have concept 0 and could map to 720841.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8
-     ratios, "HDL/total" that is total/HDL, "total T4" that is free T4, an
+     ratios, "total T4" that is free T4, an
      "A1AT phenotype" holding an IgA value
    - Beta-2 glycoprotein IgM (4 records)
    - INR concept: about 1,440 records in seconds with median 12, so PT values

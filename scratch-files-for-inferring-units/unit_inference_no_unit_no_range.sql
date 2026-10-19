@@ -209,7 +209,9 @@ SELECT * FROM VALUES
   (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s/cm5/m2', 'normal 1970-2390'),
   (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.sec/cm5', 'normal 800-1200'),
   (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6'),
-  (44, '(?i)^residual volume/total capacity',               'value_split', NULL, 'RV/TLC % paired with TLC in L (19f)')
+  (44, '(?i)^residual volume/total capacity',               'value_split', NULL, 'RV/TLC % paired with TLC in L (19f)'),
+  -- beats Part A's concept rule (suspect_concept) for 3023884
+  (45, '(?i)^cholesterol in HDL/cholesterol.total .mass ratio.', 'value_split', NULL, 'values over 1 are total/HDL; stored inverted')
 AS t(priority, test_pattern, rule, unit_code, note);
 
 -- 18a. Check: explicit rules without a valid UCUM code, and the reverse
@@ -243,6 +245,7 @@ ORDER BY ru.priority, t.n DESC;
 -- 18c. Value bands for value_split tests: value_min <= value < value_max,
 --      NULL meaning unbounded. A test's bands must cover every value with
 --      no overlap. method is value_split for a band with a unit, otherwise
+--      unitless, reciprocal (unitless, harmonized value is 1/value),
 --      needs_review or suspect_concept. Each value_split test must match
 --      one test_pattern only.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules AS
@@ -259,7 +262,10 @@ SELECT * FROM VALUES
   -- (100 * RV / low = high in all 214 exams, 19f). TLC max 7.91; the six
   -- ratios under 8 pair with RV of 0.02-0.2 L, so they're bad data anyway.
   ('(?i)^residual volume/total capacity', NULL, 8D,   NULL,     'suspect_concept', 'TLC in L under the RV/TLC concept'),
-  ('(?i)^residual volume/total capacity', 8D,   NULL, '%',      'value_split',  NULL)
+  ('(?i)^residual volume/total capacity', 8D,   NULL, '%',      'value_split',  NULL),
+  -- HDL/total can't exceed 1; values over 1 (median 3.5) are total/HDL
+  ('(?i)^cholesterol in HDL/cholesterol.total .mass ratio.', NULL, 1D, NULL, 'unitless',   NULL),
+  ('(?i)^cholesterol in HDL/cholesterol.total .mass ratio.', 1D, NULL, NULL, 'reciprocal', 'total/HDL, inverted')
 AS t(test_pattern, value_min, value_max, unit_code, method, note);
 
 -- 18d. Check: should be empty. Bad codes, gaps, overlaps, open ends.
@@ -277,7 +283,7 @@ WITH v AS (
 SELECT * FROM (
   SELECT CASE WHEN v.unit_code IS NOT NULL AND v.ucum_concept_id IS NULL THEN 'not a UCUM code'
               WHEN (v.method = 'value_split') <> (v.unit_code IS NOT NULL)
-                OR v.method NOT IN ('value_split', 'needs_review', 'suspect_concept')
+                OR v.method NOT IN ('value_split', 'unitless', 'reciprocal', 'needs_review', 'suspect_concept')
                                                                          THEN 'method and unit_code disagree'
               WHEN v.rn = 1 AND v.value_min IS NOT NULL                  THEN 'first band has a lower bound'
               WHEN v.rn = v.n_bands AND v.value_max IS NOT NULL          THEN 'last band has an upper bound'
@@ -553,5 +559,7 @@ WHEN MATCHED THEN UPDATE SET
   t.inferred_unit_concept_id   = d.inferred_unit_concept_id,
   t.inferred_unit_source_value = d.unit_code,
   t.canonical_unit_concept_id  = NULL,
-  t.harmonized_value_as_number = CASE WHEN d.unit_inference_method = 'unitless'
-                                      THEN t.value_as_number END;
+  t.harmonized_value_as_number = CASE d.unit_inference_method
+                                      WHEN 'unitless'   THEN t.value_as_number
+                                      WHEN 'reciprocal' THEN try_divide(1, t.value_as_number)
+                                 END;
