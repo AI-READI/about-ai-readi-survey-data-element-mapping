@@ -141,6 +141,22 @@ Numeric records after Parts A-D (cell 20a): 6,534,551 in canonical
 unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
+## Cleanup (do first)
+
+None of these depend on the run results:
+
+- Part D comments still describe some reviews per (test, unit) where they're
+  now per (partner, test, unit), e.g. 19d's header. Read through D's
+  comments for that.
+- Part B's header has no run-order note; A's, C's and D's do. Add one.
+- [README.md](README.md) and [README_big.md](README_big.md) are near-identical
+  (one uses `<details>` blocks) and predate Parts A-D. Ask Siggie whether
+  they're someone else's source material to keep, or whether one or both
+  can go.
+- Read this handoff through for wording left over from earlier versions
+  (text that corrects or argues with what an older draft said). Move such
+  history out or cut it; keep decisions and traps.
+
 ## Next step
 
 Siggie has imported A-D and run them in order, after Parts C and D were
