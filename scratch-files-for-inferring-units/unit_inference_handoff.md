@@ -110,34 +110,31 @@ records and never uses its own output as evidence.
 | source_name | concept 0, Part A's source-name rules (no median check, so name rules override the wrong ones) |
 | value_split | group holds two units (or a unit and a different test); each record gets the unit and method of its value band (`unit_no_range_value_rules`) |
 
-Result: 510,414 explicit, 469,711 unitless, 73,887 copied, 365 source_name,
-3,794 not_a_quantity, 6,482 suspect_concept (HDL/total), 1,764 needs_review.
-Part C re-run after Part D added no new no_conversion pairs.
+value_split covers body temperature (Cel / [degF]), "Protein/Creatinine
+Ratio, Exte" (mg/mg / mg/g) and "Residual volume/Total capacity". That last
+test holds two records per exam: RV/TLC in % and TLC in L (100 * RV / low =
+high in all 214 exams, cell 19f). Values under 8 are TLC and get
+suspect_concept. SVR is `dyn.sec/cm5` (32703) and SVR index `dyn.s/cm5/m2`
+(720841); OMOP spells the two inconsistently.
 
-Numeric records after Parts A-D and the Part C re-run: 6,533,698 in canonical
-unit, 502,750 unitless, 3,191 with a unit but no conversion, 12,917 with no
+Result: 510,927 explicit, 469,736 unitless, 73,887 copied, 365 source_name,
+3,794 not_a_quantity, 6,707 suspect_concept (HDL/total, TLC under RV/TLC),
+1,099 needs_review, 340 value_split. Part C re-run after Part D added no
+new no_conversion pairs.
+
+Numeric records after Parts A-D and the Part C re-run: 6,534,551 in canonical
+unit, 502,775 unitless, 3,191 with a unit but no conversion, 12,039 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
 
-1. **Part D leftovers** (needs_review, 1,764 records). Rules written and
-   reviewed (19a: down to 1,099); MERGE and Part C re-run not yet done:
-   - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83):
-     value_split, bands in cell 18c. 19d showed no records in the gaps.
-   - Systemic vascular resistance and its index (513): rules 41/42,
-     `dyn.sec/cm5` (32703) and `dyn.s/cm5/m2` (720841). OMOP spells the two
-     inconsistently. The 5 Part B records with unit string
-     `dynes-sec/cm5/m2` have concept 0 and could map to 720841. SVRI has a
-     low tail (p05 194).
-   - Treadmill MPH (28): no rule. OMOP UCUM has miles but no mile per hour.
-   - Residual volume/Total capacity (438): two records per exam, RV/TLC %
-     and TLC in L (19f: 100 * RV / low = high in 214 of 214 exams).
-     value_split at 8: below is suspect_concept, 8 and up is %.
-   - RAST classes: rule 43, unitless (values 0 and 4).
-   - Not yet ruled: Creatinine/Protein [Mass Ratio] in Urine (94, median
-     235, looks like protein/creatinine mg/g), Physical findings of Skin
-     (69, integers 1-10), Aldosterone/Renin ratio (33).
-   - Log viral loads (left unmapped, as in Part B) and one-offs remain.
+1. **Part D leftovers** still needs_review (1,099 records): log viral
+   loads (left unmapped, as in Part B), Treadmill MPH (28; OMOP UCUM has no
+   mile per hour), and tests with no rule yet: Creatinine/Protein [Mass
+   Ratio] in Urine (94, median 235, looks like protein/creatinine mg/g),
+   Physical findings of Skin (69, integers 1-10), Aldosterone/Renin ratio
+   (33), plus one-offs. The 5 Part B records with unit string
+   `dynes-sec/cm5/m2` have concept 0 and could map to 720841.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8
      ratios, "HDL/total" that is total/HDL, "total T4" that is free T4, an
