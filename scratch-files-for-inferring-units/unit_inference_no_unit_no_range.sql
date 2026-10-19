@@ -477,6 +477,31 @@ ORDER BY test_name, n DESC;
 
 -- COMMAND ----------
 
+-- 19f. Review: RV/TLC holds two values per exam (438 = 2 x 219), one near
+--      3-6 and one near 30-40. If the low one is TLC in L, then
+--      100 * RV / low should equal high. One row per exam; match_2pt counts
+--      exams where they agree within 2 points.
+WITH r AS (
+  SELECT person_id, measurement_date, measurement_concept_id AS c, value_as_number AS v
+  FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_records
+  WHERE measurement_concept_id IN (21493446, 21493126)  -- RV/TLC, RV
+),
+e AS (
+  SELECT person_id, measurement_date,
+         max(CASE WHEN c = 21493126 THEN v END) AS rv,
+         min(CASE WHEN c = 21493446 THEN v END) AS low,
+         max(CASE WHEN c = 21493446 THEN v END) AS high,
+         count_if(c = 21493446) AS n_ratio
+  FROM r GROUP BY 1, 2
+)
+SELECT *, round(100 * rv / low, 1) AS rv_over_low_pct,
+       count_if(abs(100 * rv / low - high) <= 2) OVER () AS match_2pt,
+       COUNT(*) OVER () AS n_exams
+FROM e
+ORDER BY person_id, measurement_date;
+
+-- COMMAND ----------
+
 -- ===== D3. Apply Part D decisions =====
 
 -- 20. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id
