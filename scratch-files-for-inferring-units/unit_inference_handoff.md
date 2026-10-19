@@ -34,7 +34,7 @@ plus the view `measurement_unit_keyed`; for Part D `unit_no_range_rules`,
 - [unit_inference_with_source_value_but_no_unit_concept.sql](unit_inference_with_source_value_but_no_unit_concept.sql): Part B
 - [unit_conversion.sql](unit_conversion.sql): Part C (conversion to canonical units)
 - [unit_inference_no_unit_no_range.sql](unit_inference_no_unit_no_range.sql): Part D
-  (no unit string, no reference range), written, not yet run
+  (no unit string, no reference range)
 
 ## Done
 
@@ -94,21 +94,41 @@ concept, or the measurement_source_value for concept 0.
 | no_conversion | different quantity under one test, or no fixed factor (log viral loads, Lp(a), arbitrary antibody units) |
 | blocked | relabel rule says don't convert |
 
-Numeric records after Part C: 5,949,036 in canonical unit, 33,039 unitless,
-3,187 with a unit but no conversion, 1,067,294 with no unit.
+**Part D.** Numeric records with no unit string, no unit concept and no
+reference range: 1,066,417 records, almost all from one partner, mostly
+flowsheet and exam data. About 100 tests cover 97% of them, and most of those
+tests have no labeled records to copy a unit from, so name rules
+(`unit_no_range_rules`, regexes on the test name) do most of the work.
+Decisions are per (partner, test). Records are picked by their raw columns
+(no unit string, no unit concept, no range_high), so rerunning sees the same
+records and never uses its own output as evidence.
+
+| Method | Meaning |
+|---|---|
+| explicit / unitless / not_a_quantity / needs_review | name rule (not_a_quantity: codes, IDs, admin fields such as EKG impression codes, HLA alleles, case numbers) |
+| partner_unit / dataset_unit / unitless | copied from labeled or unitless records of the same test, same partner first; group median within a factor of 2 of the candidate's |
+| source_name | concept 0, Part A's source-name rules (no median check, so name rules override the wrong ones) |
+
+Result: 510,414 explicit, 469,711 unitless, 73,887 copied, 365 source_name,
+3,794 not_a_quantity, 6,482 suspect_concept (HDL/total), 1,764 needs_review.
+Part C re-run after Part D added no new no_conversion pairs.
+
+Numeric records after Parts A-D and the Part C re-run: 6,533,698 in canonical
+unit, 502,750 unitless, 3,191 with a unit but no conversion, 12,917 with no
+unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
 
-1. **No unit string, no reference range:** 1,066,511 numeric records. Mostly
-   flowsheet data (ETCO2, pain scores, tidal volume, MAP). Probably many
-   unitless scores and single-unit vitals. Part D notebook is written but not
-   run past 17c. 17b/17c: almost all one partner; ~100 flowsheet/exam tests
-   cover 97%, most with no labeled records of the same test to copy from.
-   Name rules (`unit_no_range_rules`) written from 17c; they add a new method
-   `not_a_quantity` for codes, IDs and admin fields. Decisions per (partner, test) copying
-   units from labeled records of the same test with Part A's factor-2 median
-   check, then a MERGE. Next: run 17-17c, write name rules from 17c, run 19,
-   review 19a-19c, apply 20, re-run Part C from cell 14.
+1. **Part D leftovers** (needs_review, 1,764 records):
+   - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83): each
+     group mixes two units (Cel and [degF]; mg/mg and mg/g). Need a split by
+     value, which the per-group design doesn't do.
+   - Systemic vascular resistance and its index (513): need the OMOP UCUM
+     spelling of dyn.s/cm5.
+   - Treadmill MPH (28): `[mi_i]/h` isn't an OMOP UCUM concept.
+   - Residual volume/Total capacity (438): median 6.54 fits neither a
+     fraction nor a percent.
+   - Log viral loads (left unmapped, as in Part B), RAST classes, one-offs.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8
      ratios, "HDL/total" that is total/HDL, "total T4" that is free T4, an
