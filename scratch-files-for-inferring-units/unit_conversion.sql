@@ -19,11 +19,14 @@
 --                  g/L <-> mol/L by molar mass, eq/L <-> mol/L by charge
 --                  (so mEq/L = mmol/L for monovalent ions, 0.5 for Ca, Mg).
 --                  HbA1c % <-> mmol/mol is an affine bridge.
+--   unit_relabel_rules  units whose label is wrong (mis-coded, or values
+--                  clearly in another unit): convert as treat_as_code instead.
 --   canonical unit the most common unit for the test (counting equivalent
 --                  codes together), unless canonical_unit_rules says otherwise.
 -- Conversion: canonical = slope * value_as_number + intercept, per
 -- (test, unit), in unit_conversion_decisions.
--- Methods written: identity, same_base, analyte_bridge, no_conversion.
+-- Methods written: identity, same_base, analyte_bridge, no_conversion
+-- (relabeled_as says when a relabel rule applied).
 -- canonical_unit_concept_id is set only where harmonized_value_as_number is,
 -- so a non-null harmonized value is always in canonical_unit_concept_id.
 --
@@ -34,8 +37,8 @@
 -- ===== C1. Hand-written rule tables =====
 
 -- 13. Unit factors. base is just a label; units convert only within a base
---     (or across bases through an analyte bridge, 14b).
---     unit_code is the UCUM code as OMOP spells it (checked in 13c).
+--     (or across bases through an analyte bridge, 13b).
+--     unit_code is the UCUM code as OMOP spells it (checked in 13e).
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_factors AS
 SELECT unit_code, base, CAST(slope AS DOUBLE) AS slope,
        CAST(intercept AS DOUBLE) AS intercept, note
@@ -54,6 +57,7 @@ FROM VALUES
   ('[ft_i]',           'm',       0.3048,        0, 'foot'),
   -- temperature
   ('Cel',              'Cel',     1,             0, NULL),
+  ('[degC]',           'Cel',     1,             0, 'same as Cel'),
   ('[degF]',           'Cel',     5 / 9,         -160 / 9, 'C = (F - 32) * 5/9'),
   ('K',                'Cel',     1,             -273.15, NULL),
   -- pressure
@@ -83,11 +87,19 @@ FROM VALUES
   ('L/h',              'L/min',   1 / 60,        0, NULL),
   ('L/s',              'L/min',   60,            0, NULL),
   ('mL/s',             'L/min',   0.06,          0, NULL),
+  ('mL/min/(173.10*-2.m2)', 'eGFR', 1,           0, NULL),
+  ('mL/min/1.73.m2',   'eGFR',    1,             0, 'same as mL/min/(173.10*-2.m2)'),
+  -- radiation dose, osmolality
+  ('Gy',               'Gy',      1,             0, NULL),
+  ('cGy',              'Gy',      0.01,          0, NULL),
+  ('mosm/kg',          'mosm/kg', 1,             0, NULL),
+  ('mosm/kg{H20}',     'mosm/kg', 1,             0, 'same as mosm/kg'),
   -- mass concentration
   ('g/L',              'g/L',     1,             0, NULL),
   ('g/dL',             'g/L',     10,            0, NULL),
   ('mg/mL',            'g/L',     1,             0, NULL),
   ('mg/dL',            'g/L',     0.01,          0, NULL),
+  ('mg/dL{calc}',      'g/L',     0.01,          0, 'same as mg/dL'),
   ('mg/L',             'g/L',     0.001,         0, NULL),
   ('ug/mL',            'g/L',     0.001,         0, NULL),
   ('ug/dL',            'g/L',     1e-5,          0, NULL),
@@ -96,6 +108,17 @@ FROM VALUES
   ('ng/dL',            'g/L',     1e-8,          0, NULL),
   ('ng/L',             'g/L',     1e-9,          0, NULL),
   ('pg/mL',            'g/L',     1e-9,          0, NULL),
+  ('ng{FEU}/mL',       'g{FEU}/L', 1e-6,         0, 'D-dimer'),
+  ('ug{FEU}/mL',       'g{FEU}/L', 1e-3,         0, 'D-dimer'),
+  ('mg{FEU}/L',        'g{FEU}/L', 1e-3,         0, 'D-dimer'),
+  -- mass ratios (per creatinine and plain)
+  ('mg/mg{creat}',     'g/g',     1,             0, NULL),
+  ('mg/g{creat}',      'g/g',     1e-3,          0, NULL),
+  ('ug/mg{creat}',     'g/g',     1e-3,          0, NULL),
+  ('ug/g{creat}',      'g/g',     1e-6,          0, NULL),
+  ('mg/mg',            'g/g',     1,             0, NULL),
+  ('mg/g',             'g/g',     1e-3,          0, NULL),
+  ('ug/mg',            'g/g',     1e-3,          0, NULL),
   -- molar and equivalent concentration
   ('mol/L',            'mol/L',   1,             0, NULL),
   ('mmol/L',           'mol/L',   1e-3,          0, NULL),
@@ -119,20 +142,31 @@ FROM VALUES
   ('10*12/L',          '/L',      1e12,          0, NULL),
   ('/uL',              '/L',      1e6,           0, NULL),
   ('/mm3',             '/L',      1e6,           0, NULL),
+  ('{cells}/uL',       '/L',      1e6,           0, NULL),
   ('10*3/uL',          '/L',      1e9,           0, NULL),
+  ('10*3/mm3',         '/L',      1e9,           0, 'same as 10*3/uL'),
   ('10*6/uL',          '/L',      1e12,          0, NULL),
+  ('10*6/mm3',         '/L',      1e12,          0, 'same as 10*6/uL'),
   -- percent (mmol/mol gets its own base so it never meets % without a bridge)
   ('%',                '%',       1,             0, NULL),
   ('%{of\'HGB}',       '%',       1,             0, 'same as %'),
+  ('%{calc}',          '%',       1,             0, 'same as %'),
   ('mmol/mol',         'mol/mol', 1e-3,          0, NULL),
-  -- enzyme and international units ([iU]/L = [U]/L)
+  -- unitless ratios
+  ('{ratio}',          'ratio',   1,             0, NULL),
+  ('{calc}',           'ratio',   1,             0, 'only seen on ratio tests'),
+  ('[ratio\'U]',       'ratio',   1,             0, NULL),
+  -- enzyme and international units ([iU] = [U])
   ('[iU]/L',           'U/L',     1,             0, NULL),
   ('[U]/L',            'U/L',     1,             0, 'same as [iU]/L'),
-  ('U/L',              'U/L',     1,             0, 'same as [iU]/L'),
   ('10*3.[iU]/L',      'U/L',     1000,          0, NULL),
+  ('10*3.[U]/L',       'U/L',     1000,          0, NULL),
   ('[iU]/mL',          'U/L',     1000,          0, NULL),
+  ('[U]/mL',           'U/L',     1000,          0, NULL),
   ('10*-3.[iU]/mL',    'U/L',     1,             0, 'mIU/mL'),
-  ('10*-6.[iU]/mL',    'U/L',     0.001,         0, 'uIU/mL')
+  ('10*-3.[iU]/L',     'U/L',     0.001,         0, 'mIU/L'),
+  ('10*-6.[iU]/mL',    'U/L',     0.001,         0, 'uIU/mL'),
+  ('10*-6.[U]/mL',     'U/L',     0.001,         0, 'uU/mL')
 AS t(unit_code, base, slope, intercept, note);
 
 -- 13a. Analytes. A test gets the first analyte (lowest priority) whose
@@ -141,13 +175,13 @@ AS t(unit_code, base, slope, intercept, note);
 --      charge bridges eq/L <-> mol/L and eq/d <-> mol/d;
 --      both together bridge eq/L <-> g/L and eq/d <-> g/d.
 --      A loose pattern is harmless unless the test carries units in two
---      bridged bases; 14b lists every assignment.
+--      bridged bases; 14c lists every assignment.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_analytes AS
 SELECT analyte, priority, pattern, CAST(molar_mass AS DOUBLE) AS molar_mass,
        CAST(charge AS INT) AS charge, note
 FROM VALUES
   ('hba1c',          1,  '(?i)a1c',                     NULL,   NULL, 'affine bridge in 13b'),
-  ('urea_nitrogen',  2,  '(?i)urea nitrogen|BUN',       28.014, NULL, 'as N2: mg/dL x 0.357 = mmol/L urea'),
+  ('urea_nitrogen',  2,  '(?i)urea nitrogen|(?-i:BUN)', 28.014, NULL, 'as N2: mg/dL x 0.357 = mmol/L urea'),
   ('creatinine',     3,  '(?i)creatinine',              113.12, NULL, NULL),
   ('glucose',        4,  '(?i)glucose',                 180.16, NULL, NULL),
   ('triglyceride',   5,  '(?i)triglyceride',            885.7,  NULL, 'mg/dL x 0.01129 = mmol/L'),
@@ -156,7 +190,7 @@ FROM VALUES
   ('calcium',        8,  '(?i)calcium',                 40.078, 2,    NULL),
   ('magnesium',      9,  '(?i)magnesium',               24.305, 2,    NULL),
   ('phosphorus',     10, '(?i)phosph',                  30.974, NULL, 'reported as P'),
-  ('uric_acid',      11, '(?i)urate|uric acid',         168.11, NULL, NULL),
+  ('uric_acid',      11, '(?i)^urate|uric acid',       168.11, NULL, NULL),
   ('bilirubin',      12, '(?i)bilirubin',               584.66, NULL, NULL),
   ('iron',           13, '(?i)iron',                    55.845, NULL, NULL),
   ('sodium',         14, '(?i)sodium',                  22.990, 1,    NULL),
@@ -164,7 +198,10 @@ FROM VALUES
   ('chloride',       16, '(?i)chloride',                35.453, 1,    NULL),
   ('bicarbonate',    17, '(?i)bicarbonate|carbon dioxide', 61.017, 1, 'total CO2 reported as HCO3'),
   ('lithium',        18, '(?i)lithium',                 6.94,   1,    NULL),
-  ('anion_gap',      19, '(?i)anion gap',               NULL,   1,    NULL)
+  ('anion_gap',      19, '(?i)anion gap',               NULL,   1,    NULL),
+  ('base_excess',    20, '(?i)base excess',             NULL,   1,    NULL),
+  ('lactate',        21, '(?i)^lactate(?! dehydrogenase)', 90.08, NULL, NULL),
+  ('beta_hydroxybutyrate', 22, '(?i)hydroxybutyrate',   104.1,  NULL, NULL)
 AS t(analyte, priority, pattern, molar_mass, charge, note);
 
 -- 13b. Bridges between bases, per analyte, both directions.
@@ -207,14 +244,38 @@ SELECT * FROM VALUES
   ('3004410', '%',   'Hemoglobin A1c')
 AS t(test_id, unit_code, note);
 
+-- 13d. Relabels: convert unit_code as if it were treat_as_code, on tests
+--      whose name matches test_pattern (NULL = every test). A rule with a
+--      pattern wins over one without.
+CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_relabel_rules AS
+SELECT * FROM VALUES
+  -- mis-coded units
+  (NULL,                        'S',        's',        'UCUM S is siemens; used for seconds'),
+  (NULL,                        'H',        'h',        'UCUM H is henry; used for hours'),
+  (NULL,                        'l',        'L',        NULL),
+  (NULL,                        'mm3',      '/mm3',     'cell counts'),
+  ('(?i)weight',                '[foz_us]', '[oz_av]',  'fluid ounce on weights: avoirdupois ounce'),
+  ('(?i)minute volume',         'L',        'L/min',    NULL),
+  ('(?i)minute volume',         'l',        'L/min',    NULL),
+  -- values plainly in another unit (15d medians)
+  ('^Carcinoembryonic Ag',      'mg/dL',    'ng/mL',    'median 0.86'),
+  ('^Sex hormone binding globulin', 'nmol/mL', 'nmol/L', 'median 29.5'),
+  ('^Testosterone .Mass',       'ug/dL',    'ng/mL',    'median 6.8'),
+  ('^Glucose$',                 'ng/dL',    'mg/dL',    'value 151'),
+  ('^Albumin, External$',       'mg/dL',    'g/dL',     'value 3.9'),
+  ('^Sodium, External$',        'mg/dL',    'mmol/L',   'value 141')
+AS t(test_pattern, unit_code, treat_as_code, note);
+
 
 %sql
--- 13d. CHECK (should return no rows): bad or duplicate codes, duplicate bridges.
+-- 13e. CHECK (should return no rows): bad or duplicate codes, duplicate bridges.
 --      Paste any rows this returns; I'll correct them.
 WITH codes AS (
   SELECT 'unit_factors' AS src, unit_code FROM hive_metastore.ehr_union_clean_metrics.unit_factors
   UNION ALL
   SELECT 'canonical_unit_rules', unit_code FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules
+  UNION ALL
+  SELECT 'unit_relabel_rules', treat_as_code FROM hive_metastore.ehr_union_clean_metrics.unit_relabel_rules
 )
 SELECT concat(c.src, ': not a UCUM code') AS problem, c.unit_code AS item
 FROM codes c
@@ -238,7 +299,7 @@ GROUP BY analyte, from_base, to_base HAVING COUNT(*) > 1;
 
 
 %sql
--- 13e. Review: canonical-unit overrides. concept_name should match note.
+-- 13f. Review: canonical-unit overrides. concept_name should match note.
 SELECT r.test_id, r.note, mc.concept_name, r.unit_code
 FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r
 LEFT JOIN omop_vocab.concept mc ON mc.concept_id = try_cast(r.test_id AS INT);
@@ -301,47 +362,65 @@ ORDER BY a.analyte, n DESC;
 
 -- 15. Decisions: one row per (test, effective unit)
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions AS
-WITH cls AS (
+WITH relabeled AS (
+  -- conv_code: the code each unit is converted as
+  SELECT tu.*, rl.relabeled_as, COALESCE(rl.relabeled_as, tu.unit_code) AS conv_code
+  FROM hive_metastore.ehr_union_clean_metrics.unit_test_units tu
+  LEFT JOIN (
+    SELECT t.test_id, t.unit_concept_id,
+           min_by(r.treat_as_code, CASE WHEN r.test_pattern IS NULL THEN 1 ELSE 0 END) AS relabeled_as
+    FROM hive_metastore.ehr_union_clean_metrics.unit_test_units t
+    JOIN hive_metastore.ehr_union_clean_metrics.unit_relabel_rules r
+      ON  r.unit_code = t.unit_code
+      AND (r.test_pattern IS NULL OR t.test_name RLIKE r.test_pattern)
+    GROUP BY 1, 2
+  ) rl ON rl.test_id = tu.test_id AND rl.unit_concept_id = tu.unit_concept_id
+),
+cls AS (
   -- equivalent codes (same base, slope, intercept) count as one unit
-  SELECT tu.test_id, tu.unit_concept_id, tu.n,
-         CASE WHEN f.base IS NULL THEN concat('concept:', CAST(tu.unit_concept_id AS STRING))
+  SELECT r.test_id, r.unit_concept_id, r.conv_code, r.n,
+         CASE WHEN f.base IS NULL THEN concat('code:', COALESCE(r.conv_code, CAST(r.unit_concept_id AS STRING)))
               ELSE concat_ws(':', f.base, CAST(f.slope AS STRING), CAST(f.intercept AS STRING))
          END AS class_key
-  FROM hive_metastore.ehr_union_clean_metrics.unit_test_units tu
-  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors f ON f.unit_code = tu.unit_code
+  FROM relabeled r
+  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors f ON f.unit_code = r.conv_code
 ),
 cls_n AS (
-  SELECT test_id, class_key, SUM(n) AS n, max_by(unit_concept_id, n) AS top_unit_concept_id
+  SELECT test_id, class_key, SUM(n) AS n,
+         max_by(conv_code, n) AS top_code, max_by(unit_concept_id, n) AS top_unit_concept_id
   FROM cls GROUP BY 1, 2
 ),
 most_common AS (
-  SELECT test_id, max_by(top_unit_concept_id, n) AS unit_concept_id
+  SELECT test_id, max_by(top_code, n) AS unit_code,
+         max_by(top_unit_concept_id, n) AS unit_concept_id
   FROM cls_n GROUP BY 1
 ),
 canonical AS (
   SELECT m.test_id,
-         COALESCE(ru.concept_id, m.unit_concept_id) AS canonical_unit_concept_id,
-         CASE WHEN ru.concept_id IS NOT NULL THEN 'rule' ELSE 'most_common' END AS canonical_source
+         COALESCE(r.unit_code, m.unit_code) AS canonical_unit_code,
+         -- fall back to the data's own concept when the code isn't in UCUM
+         COALESCE(ru.concept_id, CASE WHEN r.unit_code IS NULL THEN m.unit_concept_id END)
+           AS canonical_unit_concept_id,
+         CASE WHEN r.unit_code IS NOT NULL THEN 'rule' ELSE 'most_common' END AS canonical_source
   FROM most_common m
   LEFT JOIN hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r ON r.test_id = m.test_id
   LEFT JOIN omop_vocab.concept ru
     ON  ru.vocabulary_id = 'UCUM'
-    AND ru.concept_code = r.unit_code
+    AND ru.concept_code = COALESCE(r.unit_code, m.unit_code)
     AND ru.invalid_reason IS NULL
 ),
 pairs AS (
-  SELECT tu.*, a.analyte,
-         c.canonical_unit_concept_id, kc.concept_code AS canonical_unit_code, c.canonical_source,
+  SELECT r.*, a.analyte,
+         c.canonical_unit_concept_id, c.canonical_unit_code, c.canonical_source,
          fu.base AS u_base, fu.slope AS u_slope, fu.intercept AS u_intercept,
          fk.base AS k_base, fk.slope AS k_slope, fk.intercept AS k_intercept,
          CASE WHEN fu.base = fk.base THEN 1D ELSE b.slope END     AS b_slope,
          CASE WHEN fu.base = fk.base THEN 0D ELSE b.intercept END AS b_intercept
-  FROM hive_metastore.ehr_union_clean_metrics.unit_test_units tu
-  JOIN canonical c ON c.test_id = tu.test_id
-  LEFT JOIN omop_vocab.concept kc ON kc.concept_id = c.canonical_unit_concept_id
-  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_test_analytes a ON a.test_id = tu.test_id
-  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors fu ON fu.unit_code = tu.unit_code
-  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors fk ON fk.unit_code = kc.concept_code
+  FROM relabeled r
+  JOIN canonical c ON c.test_id = r.test_id
+  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_test_analytes a ON a.test_id = r.test_id
+  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors fu ON fu.unit_code = r.conv_code
+  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors fk ON fk.unit_code = c.canonical_unit_code
   LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_analyte_bridges b
     ON  b.analyte = a.analyte
     AND b.from_base = fu.base
@@ -349,17 +428,17 @@ pairs AS (
 )
 -- unit -> base -> (bridge) -> canonical:
 --   canonical = (b_slope * (u_slope * x + u_intercept) + b_intercept - k_intercept) / k_slope
-SELECT test_id, test_name, unit_concept_id, unit_code, n, analyte,
+SELECT test_id, test_name, unit_concept_id, unit_code, relabeled_as, n, analyte,
        canonical_unit_concept_id, canonical_unit_code, canonical_source,
-       CASE WHEN unit_concept_id = canonical_unit_concept_id THEN 'identity'
-            WHEN u_base = k_base                              THEN 'same_base'
-            WHEN b_slope IS NOT NULL                          THEN 'analyte_bridge'
+       CASE WHEN conv_code = canonical_unit_code THEN 'identity'
+            WHEN u_base = k_base                 THEN 'same_base'
+            WHEN b_slope IS NOT NULL             THEN 'analyte_bridge'
             ELSE 'no_conversion'
        END AS conversion_method,
-       CASE WHEN unit_concept_id = canonical_unit_concept_id THEN 1D
+       CASE WHEN conv_code = canonical_unit_code THEN 1D
             ELSE b_slope * u_slope / k_slope
        END AS conversion_slope,
-       CASE WHEN unit_concept_id = canonical_unit_concept_id THEN 0D
+       CASE WHEN conv_code = canonical_unit_code THEN 0D
             ELSE (b_slope * u_intercept + b_intercept - k_intercept) / k_slope
        END AS conversion_intercept
 FROM pairs;
@@ -376,7 +455,8 @@ GROUP BY 1 ORDER BY n_records DESC;
 -- 15b. Review: canonical unit for every test that has more than one unit.
 --      Look for canonical units you'd not choose; add them to 13c.
 SELECT test_name, canonical_unit_code, canonical_source, SUM(n) AS n,
-       array_join(collect_list(concat(unit_code, ' ', CAST(n AS STRING), ' ', conversion_method)), '; ') AS units
+       array_join(collect_list(concat_ws(' ', unit_code, concat('->', relabeled_as),
+                                         CAST(n AS STRING), conversion_method)), '; ') AS units
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
 GROUP BY test_id, test_name, canonical_unit_code, canonical_source
 HAVING COUNT(*) > 1
@@ -384,46 +464,48 @@ ORDER BY n DESC;
 
 
 %sql
--- 15c. Review: (test, unit) pairs with no conversion to the canonical unit
-SELECT test_name, unit_code, n, canonical_unit_code, analyte
-FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
+-- 15c. Medians per (test, unit): median raw and converted value vs the median of
+--        records originally labeled with the canonical unit.
+CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_conversion_medians AS
+WITH per_unit AS (
+  SELECT d.test_id, d.test_name, d.unit_code, d.relabeled_as, d.canonical_unit_code,
+         d.conversion_method, d.analyte, COUNT(*) AS n,
+         percentile_approx(k.value_as_number, 0.5) AS median_raw,
+         percentile_approx(d.conversion_slope * k.value_as_number + d.conversion_intercept, 0.5)
+           AS median_converted
+  FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
+  JOIN hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions d
+    ON  d.test_id = k.test_id
+    AND d.unit_concept_id = k.effective_unit_concept_id
+  GROUP BY 1, 2, 3, 4, 5, 6, 7
+)
+SELECT p.*, c.median_raw AS canonical_median,
+       p.median_converted / NULLIF(c.median_raw, 0) AS ratio
+FROM per_unit p
+LEFT JOIN per_unit c
+  ON  c.test_id = p.test_id
+  AND c.unit_code = c.canonical_unit_code
+WHERE p.unit_code <> p.canonical_unit_code;
+
+
+%sql
+-- 15d. Review: (test, unit) pairs with no conversion to the canonical unit.
+--      Compare median_raw with canonical_median to judge what the unit really is.
+SELECT test_name, unit_code, n, median_raw, canonical_unit_code, canonical_median, analyte
+FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_medians
 WHERE conversion_method = 'no_conversion'
 ORDER BY n DESC;
 
 
 %sql
--- 15d. Review: do converted values look like canonical-unit values?
---      Median converted value per unit vs median of records already in the
---      canonical unit. ratio far from 1 = wrong factor, wrong analyte, or
---      the source unit label is wrong. Most extreme first.
-WITH v AS (
-  SELECT d.test_id, d.test_name, d.unit_code, d.canonical_unit_code, d.conversion_method,
-         k.value_as_number AS x,
-         d.conversion_slope * k.value_as_number + d.conversion_intercept AS y
-  FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
-  JOIN hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions d
-    ON  d.test_id = k.test_id
-    AND d.unit_concept_id = k.effective_unit_concept_id
-  WHERE d.conversion_slope IS NOT NULL
-),
-per_unit AS (
-  SELECT test_id, test_name, unit_code, canonical_unit_code, conversion_method,
-         COUNT(*) AS n, percentile_approx(x, 0.5) AS median_raw,
-         percentile_approx(y, 0.5) AS median_converted
-  FROM v GROUP BY 1, 2, 3, 4, 5
-),
-canon AS (
-  SELECT test_id, median_converted AS canonical_median
-  FROM per_unit WHERE conversion_method = 'identity'
-)
-SELECT p.test_name, p.unit_code, p.canonical_unit_code, p.conversion_method, p.n,
-       p.median_raw, p.median_converted, c.canonical_median,
-       p.median_converted / NULLIF(c.canonical_median, 0) AS ratio
-FROM per_unit p
-JOIN canon c ON c.test_id = p.test_id
-WHERE p.conversion_method <> 'identity'
-ORDER BY greatest(abs(p.median_converted / NULLIF(c.canonical_median, 0)),
-                  abs(c.canonical_median / NULLIF(p.median_converted, 0))) DESC NULLS FIRST;
+-- 15e. Review: do converted values look like canonical-unit values?
+--      ratio far from 1 = wrong factor, wrong analyte, or the source unit
+--      label is wrong (add a relabel rule, 13d). Most extreme first.
+SELECT test_name, unit_code, relabeled_as, canonical_unit_code, conversion_method, n,
+       median_raw, median_converted, canonical_median, ratio
+FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_medians
+WHERE conversion_method <> 'no_conversion' AND canonical_median IS NOT NULL
+ORDER BY greatest(abs(ratio), abs(try_divide(1, ratio))) DESC NULLS FIRST;
 
 
 %sql
