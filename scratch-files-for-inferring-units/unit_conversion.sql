@@ -25,8 +25,8 @@
 --                  codes together), unless canonical_unit_rules says otherwise.
 -- Conversion: canonical = slope * value_as_number + intercept, per
 -- (test, unit), in unit_conversion_decisions.
--- Methods written: identity, same_base, analyte_bridge, no_conversion
--- (relabeled_as says when a relabel rule applied).
+-- Methods written: identity, same_base, analyte_bridge, no_conversion,
+-- blocked (relabeled_as says when a relabel rule applied).
 -- canonical_unit_concept_id is set only where harmonized_value_as_number is,
 -- so a non-null harmonized value is always in canonical_unit_concept_id.
 --
@@ -57,7 +57,6 @@ FROM VALUES
   ('[ft_i]',           'm',       0.3048,        0, 'foot'),
   -- temperature
   ('Cel',              'Cel',     1,             0, NULL),
-  ('[degC]',           'Cel',     1,             0, 'same as Cel'),
   ('[degF]',           'Cel',     5 / 9,         -160 / 9, 'C = (F - 32) * 5/9'),
   ('K',                'Cel',     1,             -273.15, NULL),
   -- pressure
@@ -88,7 +87,6 @@ FROM VALUES
   ('L/s',              'L/min',   60,            0, NULL),
   ('mL/s',             'L/min',   0.06,          0, NULL),
   ('mL/min/(173.10*-2.m2)', 'eGFR', 1,           0, NULL),
-  ('mL/min/1.73.m2',   'eGFR',    1,             0, 'same as mL/min/(173.10*-2.m2)'),
   -- radiation dose, osmolality
   ('Gy',               'Gy',      1,             0, NULL),
   ('cGy',              'Gy',      0.01,          0, NULL),
@@ -201,7 +199,8 @@ FROM VALUES
   ('anion_gap',      19, '(?i)anion gap',               NULL,   1,    NULL),
   ('base_excess',    20, '(?i)base excess',             NULL,   1,    NULL),
   ('lactate',        21, '(?i)^lactate(?! dehydrogenase)', 90.08, NULL, NULL),
-  ('beta_hydroxybutyrate', 22, '(?i)hydroxybutyrate',   104.1,  NULL, NULL)
+  ('beta_hydroxybutyrate', 22, '(?i)hydroxybutyrate',   104.1,  NULL, NULL),
+  ('pyridoxine',     23, '(?i)^pyridoxine',             169.18, NULL, NULL)
 AS t(analyte, priority, pattern, molar_mass, charge, note);
 
 -- 13b. Bridges between bases, per analyte, both directions.
@@ -233,20 +232,21 @@ SELECT * FROM one_way
 UNION ALL
 SELECT analyte, to_base, from_base, 1 / slope, -intercept / slope FROM one_way;
 
--- 13c. Canonical-unit overrides. test_id is the measurement concept id as a
---      string, or 'src:<measurement_source_value>' for concept 0.
---      Everything not listed gets its most common unit.
+-- 13c. Canonical-unit overrides, for tests whose name (concept name, or
+--      source value for concept 0) matches test_pattern. 14d lists the
+--      tests each rule hits. Everything else gets its most common unit.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.canonical_unit_rules AS
 SELECT * FROM VALUES
-  ('3025315', 'kg',  'Body weight'),
-  ('3036277', 'cm',  'Body height'),
-  ('3020891', 'Cel', 'Body temperature'),
-  ('3004410', '%',   'Hemoglobin A1c')
-AS t(test_id, unit_code, note);
+  ('^Body weight$',              'kg',        NULL),
+  ('^Body height$',              'cm',        NULL),
+  ('^Body temperature$',         'Cel',       NULL),
+  ('^Hemoglobin A1c/Hemoglobin.total in Blood$', '%', NULL),
+  ('^Protein .Mass/time. in 24 hour Urine$', 'mg/(24.h)', 'most common was mg/dL')
+AS t(test_pattern, unit_code, note);
 
 -- 13d. Relabels: convert unit_code as if it were treat_as_code, on tests
 --      whose name matches test_pattern (NULL = every test). A rule with a
---      pattern wins over one without.
+--      pattern wins over one without. treat_as_code NULL = don't convert.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_relabel_rules AS
 SELECT * FROM VALUES
   -- mis-coded units
@@ -254,16 +254,31 @@ SELECT * FROM VALUES
   (NULL,                        'H',        'h',        'UCUM H is henry; used for hours'),
   (NULL,                        'l',        'L',        NULL),
   (NULL,                        'mm3',      '/mm3',     'cell counts'),
+  (NULL,                        '[degC]',   'Cel',      'not a UCUM code'),
+  (NULL,                        'mL/min/1.73.m2', 'mL/min/(173.10*-2.m2)', 'not a UCUM code'),
   ('(?i)weight',                '[foz_us]', '[oz_av]',  'fluid ounce on weights: avoirdupois ounce'),
   ('(?i)minute volume',         'L',        'L/min',    NULL),
   ('(?i)minute volume',         'l',        'L/min',    NULL),
-  -- values plainly in another unit (15d medians)
+  ('(?i)^volume',               'mL/(24.h)', 'mL',      'urine volumes'),
+  ('(?i)^volume',               'L/(24.h)', 'L',        'urine volumes'),
+  ('(?i)24 hour urine',         'g/[dose]', 'g/(24.h)', 'per collection'),
+  -- values plainly in another unit (15d/15e medians)
+  ('(?i)temperature',           'deg',      '[degF]',   'median 97.8'),
+  ('(?i)body mass index',       'm2',       'kg/m2',    'median 32.5'),
+  ('(?i)glomerular filtration|GFR', 'mL/min', 'mL/min/(173.10*-2.m2)', 'medians match eGFR'),
+  ('(?i)^MCHC',                 '%',        'g/dL',     'median 33.6'),
+  ('(?i)oxygen saturation',     'mm[Hg]',   '%',        'median 92'),
+  ('^Erythrocytes .#/volume. in Blood', '10*3/uL', '10*6/uL', 'median 3.82'),
+  ('(?i)^tidal volume',         'kg',       'mL/kg',    'median 6.4'),
   ('^Carcinoembryonic Ag',      'mg/dL',    'ng/mL',    'median 0.86'),
   ('^Sex hormone binding globulin', 'nmol/mL', 'nmol/L', 'median 29.5'),
   ('^Testosterone .Mass',       'ug/dL',    'ng/mL',    'median 6.8'),
   ('^Glucose$',                 'ng/dL',    'mg/dL',    'value 151'),
   ('^Albumin, External$',       'mg/dL',    'g/dL',     'value 3.9'),
-  ('^Sodium, External$',        'mg/dL',    'mmol/L',   'value 141')
+  ('^Sodium, External$',        'mg/dL',    'mmol/L',   'value 141'),
+  -- don't convert: no relabel makes the values fit
+  ('(?i)^mycoplasma',           '[U]/mL',   NULL,       'median 770 vs 0.27 [U]/L'),
+  ('^Creatinine .Mass/volume. in Urine$', 'ug/L', NULL, 'median 2.5')
 AS t(test_pattern, unit_code, treat_as_code, note);
 
 
@@ -276,6 +291,7 @@ WITH codes AS (
   SELECT 'canonical_unit_rules', unit_code FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules
   UNION ALL
   SELECT 'unit_relabel_rules', treat_as_code FROM hive_metastore.ehr_union_clean_metrics.unit_relabel_rules
+  WHERE treat_as_code IS NOT NULL
 )
 SELECT concat(c.src, ': not a UCUM code') AS problem, c.unit_code AS item
 FROM codes c
@@ -289,20 +305,9 @@ SELECT 'unit_factors: duplicate code', unit_code
 FROM hive_metastore.ehr_union_clean_metrics.unit_factors
 GROUP BY unit_code HAVING COUNT(*) > 1
 UNION ALL
-SELECT 'canonical_unit_rules: duplicate test_id', test_id
-FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules
-GROUP BY test_id HAVING COUNT(*) > 1
-UNION ALL
 SELECT 'duplicate bridge', concat_ws(' ', analyte, from_base, to_base)
 FROM hive_metastore.ehr_union_clean_metrics.unit_analyte_bridges
 GROUP BY analyte, from_base, to_base HAVING COUNT(*) > 1;
-
-
-%sql
--- 13f. Review: canonical-unit overrides. concept_name should match note.
-SELECT r.test_id, r.note, mc.concept_name, r.unit_code
-FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r
-LEFT JOIN omop_vocab.concept mc ON mc.concept_id = try_cast(r.test_id AS INT);
 
 
 %sql
@@ -358,16 +363,29 @@ ORDER BY a.analyte, n DESC;
 
 
 %sql
+-- 14d. Review: tests each canonical-unit rule hits. Each test should appear
+--      once, under the rule you meant.
+SELECT r.test_pattern, r.unit_code, t.test_name, SUM(t.n) AS n,
+       COUNT(*) OVER (PARTITION BY t.test_id) AS n_rules_for_test
+FROM hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r
+LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_test_units t
+  ON t.test_name RLIKE r.test_pattern
+GROUP BY r.test_pattern, r.unit_code, t.test_id, t.test_name
+ORDER BY r.test_pattern, n DESC;
+
+
+%sql
 -- ===== C3. Conversion decisions =====
 
 -- 15. Decisions: one row per (test, effective unit)
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions AS
 WITH relabeled AS (
-  -- conv_code: the code each unit is converted as
-  SELECT tu.*, rl.relabeled_as, COALESCE(rl.relabeled_as, tu.unit_code) AS conv_code
+  -- conv_code: the code each unit is converted as (NULL when blocked)
+  SELECT tu.*, rl.relabeled_as, rl.has_rule IS NOT NULL AND rl.relabeled_as IS NULL AS blocked,
+         CASE WHEN rl.has_rule IS NULL THEN tu.unit_code ELSE rl.relabeled_as END AS conv_code
   FROM hive_metastore.ehr_union_clean_metrics.unit_test_units tu
   LEFT JOIN (
-    SELECT t.test_id, t.unit_concept_id,
+    SELECT t.test_id, t.unit_concept_id, TRUE AS has_rule,
            min_by(r.treat_as_code, CASE WHEN r.test_pattern IS NULL THEN 1 ELSE 0 END) AS relabeled_as
     FROM hive_metastore.ehr_union_clean_metrics.unit_test_units t
     JOIN hive_metastore.ehr_union_clean_metrics.unit_relabel_rules r
@@ -384,6 +402,7 @@ cls AS (
          END AS class_key
   FROM relabeled r
   LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors f ON f.unit_code = r.conv_code
+  WHERE NOT r.blocked
 ),
 cls_n AS (
   SELECT test_id, class_key, SUM(n) AS n,
@@ -395,6 +414,14 @@ most_common AS (
          max_by(top_unit_concept_id, n) AS unit_concept_id
   FROM cls_n GROUP BY 1
 ),
+rule AS (
+  SELECT t.test_id, max(r.unit_code) AS unit_code
+  FROM (SELECT DISTINCT test_id, test_name
+        FROM hive_metastore.ehr_union_clean_metrics.unit_test_units) t
+  JOIN hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r
+    ON t.test_name RLIKE r.test_pattern
+  GROUP BY t.test_id
+),
 canonical AS (
   SELECT m.test_id,
          COALESCE(r.unit_code, m.unit_code) AS canonical_unit_code,
@@ -403,7 +430,7 @@ canonical AS (
            AS canonical_unit_concept_id,
          CASE WHEN r.unit_code IS NOT NULL THEN 'rule' ELSE 'most_common' END AS canonical_source
   FROM most_common m
-  LEFT JOIN hive_metastore.ehr_union_clean_metrics.canonical_unit_rules r ON r.test_id = m.test_id
+  LEFT JOIN rule r ON r.test_id = m.test_id
   LEFT JOIN omop_vocab.concept ru
     ON  ru.vocabulary_id = 'UCUM'
     AND ru.concept_code = COALESCE(r.unit_code, m.unit_code)
@@ -430,7 +457,8 @@ pairs AS (
 --   canonical = (b_slope * (u_slope * x + u_intercept) + b_intercept - k_intercept) / k_slope
 SELECT test_id, test_name, unit_concept_id, unit_code, relabeled_as, n, analyte,
        canonical_unit_concept_id, canonical_unit_code, canonical_source,
-       CASE WHEN conv_code = canonical_unit_code THEN 'identity'
+       CASE WHEN blocked                         THEN 'blocked'
+            WHEN conv_code = canonical_unit_code THEN 'identity'
             WHEN u_base = k_base                 THEN 'same_base'
             WHEN b_slope IS NOT NULL             THEN 'analyte_bridge'
             ELSE 'no_conversion'
