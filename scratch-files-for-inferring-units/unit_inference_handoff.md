@@ -125,10 +125,11 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
    - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83):
      value_split, bands in cell 18c (Cel < 45 <= gap < 80 <= [degF];
      mg/mg < 15 <= gap < 30 <= mg/g). Check 19d.
-   - Systemic vascular resistance and its index (513): rules 41/42 guess
-     `dyn.s.cm-5` and `dyn.s.cm-5.m2`. Lookup 17d shows the real spelling
-     (unit strings `dynes-sec/cm5` already carry a concept elsewhere).
-   - Treadmill MPH (28): no rule; 17d also looks for a mile-per-hour concept.
+   - Systemic vascular resistance and its index (513): rules 41/42,
+     `dyn.sec/cm5` (32703) and `dyn.s/cm5/m2` (720841). OMOP spells the two
+     inconsistently. The 5 Part B records with unit string
+     `dynes-sec/cm5/m2` have concept 0 and could map to 720841.
+   - Treadmill MPH (28): no rule. OMOP UCUM has miles but no mile per hour.
    - Residual volume/Total capacity (438): review 19e. Median 6.54 is close
      to TLC in liters, so the field may hold TLC.
    - RAST classes: rule 43 (unitless) on "radioallergosorbent"; test names

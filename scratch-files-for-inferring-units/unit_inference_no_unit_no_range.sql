@@ -113,9 +113,9 @@ ORDER BY t.n DESC;
 -- 17d. Lookup: OMOP UCUM spellings for units the name rules need.
 --      'data' rows: the unit concepts that unit strings like dynes-sec/cm5
 --      and mph already carry in the table. 'UCUM' rows: candidate concepts.
---      Rules 41 and 42 in cell 18 (SVR) guess dyn.s.cm-5 and
---      dyn.s.cm-5.m2; fix them to match. Treadmill MPH gets rule 25 only
---      if a mile-per-hour concept turns up.
+--      Rules 41 and 42 in cell 18 (SVR) use the codes found here (OMOP
+--      spells the two inconsistently: dyn.sec/cm5, dyn.s/cm5/m2). There is
+--      no mile-per-hour concept, so Treadmill MPH has no rule.
 SELECT 'data' AS src, m.unit_source_value AS unit_string, u.concept_id, u.concept_code,
        u.concept_name, u.vocabulary_id, u.invalid_reason, COUNT(*) AS n
 FROM ehr_union_clean.measurement m
@@ -184,7 +184,7 @@ SELECT * FROM VALUES
   -- times, speeds
   (23, '(?i)^sleep latency|^total sleep time|^total minutes walked', 'explicit', 'min', NULL),
   (24, '(?i)^elapsed days|^days sensor worn',               'explicit', 'd', NULL),
-  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept; see 17d)
+  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept, and 17d found no other mile-per-hour unit)
   -- percentages and units in the name
   (26, '(?i)predicted|%pred|percent|%|spo2|^oximetry|^infusion O2|/leukocytes in blood', 'explicit', '%', NULL),
   (27, '(?i)mg/dl$',                                        'explicit', 'mg/dL', NULL),
@@ -206,8 +206,8 @@ SELECT * FROM VALUES
   (39, '(?i)^glucose tolerance dose info',                  'explicit', 'g', '75 g dose'),
   (40, '(?i)^1,25 dihydroxy vitamin d',                     'explicit', 'pg/mL', NULL),
   -- Part D leftovers. SVR codes from the 17d lookup.
-  (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s.cm-5.m2', 'normal 1970-2390'),
-  (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.s.cm-5', 'normal 800-1200'),
+  (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s/cm5/m2', 'normal 1970-2390'),
+  (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.sec/cm5', 'normal 800-1200'),
   (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6')
 AS t(priority, test_pattern, rule, unit_code, note);
 
