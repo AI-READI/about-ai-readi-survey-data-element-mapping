@@ -1,3 +1,4 @@
+-- Databricks notebook source
 -- ===== B1. Unit-string hand map. Last result: check, should be empty =====
 -- PART B: records that HAVE a unit string but no unit concept.
 -- Per string: hand map first, then reuse the concept the same string

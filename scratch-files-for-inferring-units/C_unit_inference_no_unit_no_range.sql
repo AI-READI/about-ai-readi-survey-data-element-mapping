@@ -1,9 +1,9 @@
 -- Databricks notebook source
--- Unit inference, Part D: numeric records with no unit string, no unit
+-- Unit inference, Part C: numeric records with no unit string, no unit
 -- concept and no reference range (~1.07M records, mostly flowsheet:
 -- ETCO2, pain scores, tidal volume, MAP).
 --
--- A group is (data_partner_id, test_id); test_id as in Part C (the
+-- A group is (data_partner_id, test_id); test_id as in Part D (the
 -- measurement concept, or 'src:<source value>' for concept 0).
 -- Each group gets the first of:
 --   1. unit_no_range_rules  name pattern on the test name (unitless,
@@ -18,25 +18,25 @@
 --                           2 of the candidate's median.
 --   4. source_name          concept 0 only: Part A's unit_source_name_rules
 --   5. needs_review
--- Method names are Part A's; range_high IS NULL tells Part D records apart.
+-- Method names are Part A's; range_high IS NULL tells Part C records apart.
 -- value_split groups hold two units, or a unit and a different test; the
--- MERGE (20) gives each record the unit and method of the value band it
+-- MERGE (16) gives each record the unit and method of the value band it
 -- falls in (unit_no_range_value_rules).
 --
 -- Records in scope are picked by their RAW columns (no unit string, no unit
 -- concept, no range_high), never by inferred_unit_concept_id, so rerunning
--- after D4 sees the same records and doesn't use its own output as evidence.
+-- after C3 sees the same records and doesn't use its own output as evidence.
 --
--- After D4, re-run Part C from cell 14 (unit_conversion.sql) so the new
--- units get converted.
+-- Run after Parts A and B (their units are evidence here) and before Part D
+-- (D_unit_conversion.sql), which converts the units assigned here.
 --
 -- Import with File > Import; each COMMAND block becomes a cell. Blocks that
 -- end in a SELECT show its result.
 
 
--- ===== D0. Sizing =====
+-- ===== C0. Sizing =====
 
--- 17. Records in scope, and the records that can serve as evidence for them
+-- 13. Records in scope, and the records that can serve as evidence for them
 CREATE OR REPLACE VIEW hive_metastore.ehr_union_clean_metrics.unit_no_range_records AS
 SELECT h.*,
        CASE WHEN COALESCE(h.measurement_concept_id, 0) = 0
@@ -49,7 +49,7 @@ WHERE h.value_as_number IS NOT NULL
   AND COALESCE(h.unit_concept_id, 0) = 0
   AND h.range_high IS NULL;
 
--- 17a. Evidence: every other numeric record with a unit or marked unitless.
+-- 13a. Evidence: every other numeric record with a unit or marked unitless.
 --      unit_concept_id NULL here means unitless.
 CREATE OR REPLACE VIEW hive_metastore.ehr_union_clean_metrics.unit_no_range_evidence AS
 SELECT data_partner_id, test_id, effective_unit_concept_id AS unit_concept_id, value_as_number
@@ -59,7 +59,7 @@ WHERE (effective_unit_concept_id IS NOT NULL OR unit_inference_method = 'unitles
            AND COALESCE(unit_concept_id, 0) = 0
            AND range_high IS NULL);
 
--- 17b. Review: overall shape
+-- 13b. Review: overall shape
 SELECT CASE WHEN COALESCE(r.measurement_concept_id, 0) = 0 THEN 'concept 0' ELSE 'has concept' END AS concept,
        mt.concept_name AS measurement_type,
        r.range_low IS NOT NULL AS has_range_low,
@@ -73,7 +73,7 @@ ORDER BY n DESC;
 
 -- COMMAND ----------
 
--- 17c. Review: one row per test, biggest first. cum_pct shows how many tests
+-- 13c. Review: one row per test, biggest first. cum_pct shows how many tests
 --      cover most of the records. frac_integer near 1 with a small range
 --      or few distinct values suggest a score; n_evidence is how many
 --      records of the same test have a unit to copy.
@@ -110,10 +110,10 @@ ORDER BY t.n DESC;
 
 -- COMMAND ----------
 
--- 17d. Lookup: OMOP UCUM spellings for units the name rules need.
+-- 13d. Lookup: OMOP UCUM spellings for units the name rules need.
 --      'data' rows: the unit concepts that unit strings like dynes-sec/cm5
 --      and mph already carry in the table. 'UCUM' rows: candidate concepts.
---      Rules 41 and 42 in cell 18 (SVR) use the codes found here (OMOP
+--      Rules 41 and 42 in cell 14 (SVR) use the codes found here (OMOP
 --      spells the two inconsistently: dyn.sec/cm5, dyn.s/cm5/m2). There is
 --      no mile-per-hour concept, so Treadmill MPH has no rule.
 SELECT 'data' AS src, m.unit_source_value AS unit_string, u.concept_id, u.concept_code,
@@ -131,18 +131,18 @@ ORDER BY src, n DESC, concept_code;
 
 -- COMMAND ----------
 
--- ===== D1. Hand rules by test name. Last result: check, should be empty =====
+-- ===== C1. Hand rules by test name. Last result: check, should be empty =====
 
--- 18. Rules on the test name (concept name, or source value for concept 0).
+-- 14. Rules on the test name (concept name, or source value for concept 0).
 --     Java regexes; lowest priority wins. (?i) covers the whole pattern, so
 --     anchor short tokens or use (?-i:...). Brackets and parens are matched
 --     with . or a one-character class ([(], .#]) to avoid backslashes.
---     Written from the 17c review; tests with labeled records elsewhere are
+--     Written from the 13c review; tests with labeled records elsewhere are
 --     mostly left to copy their unit (step 3).
 --     rule = 'unitless' | 'explicit' (unit_code required) | 'suspect_concept'
 --          | 'not_a_quantity' (codes, identifiers, admin fields)
 --          | 'needs_review' (keeps a test from getting a unit by later steps)
---          | 'value_split' (two units told apart by value; bands in 18c)
+--          | 'value_split' (two units told apart by value; bands in 14c)
 --     Name rules beat everything after them, including Part A's source-name
 --     rules, which have no median check.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_rules AS
@@ -184,11 +184,11 @@ SELECT * FROM VALUES
   -- times, speeds
   (23, '(?i)^sleep latency|^total sleep time|^total minutes walked', 'explicit', 'min', NULL),
   (24, '(?i)^elapsed days|^days sensor worn',               'explicit', 'd', NULL),
-  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept, and 17d found no other mile-per-hour unit)
+  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept, and 13d found no other mile-per-hour unit)
   -- percentages and units in the name
   (26, '(?i)predicted|%pred|percent|%|spo2|^oximetry|^infusion O2|/leukocytes in blood', 'explicit', '%', NULL),
   (27, '(?i)mg/dl$',                                        'explicit', 'mg/dL', NULL),
-  -- from the 19b/19c review: groups that mix units, and tests whose median
+  -- from the 15b/15c review: groups that mix units, and tests whose median
   -- missed the factor-2 check or that Part A's source-name rules got wrong
   (28, '(?i)^body temperature$|^protein/creatinine ratio, exte', 'value_split', NULL,
        'one group holds two units: Cel and [degF]; mg/mg and mg/g'),
@@ -205,16 +205,16 @@ SELECT * FROM VALUES
   (38, '(?i)^cortisol stimulation interval',                'explicit', 'min', NULL),
   (39, '(?i)^glucose tolerance dose info',                  'explicit', 'g', '75 g dose'),
   (40, '(?i)^1,25 dihydroxy vitamin d',                     'explicit', 'pg/mL', NULL),
-  -- Part D leftovers. SVR codes from the 17d lookup.
+  -- Part C leftovers. SVR codes from the 13d lookup.
   (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s/cm5/m2', 'normal 1970-2390'),
   (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.sec/cm5', 'normal 800-1200'),
   (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6'),
-  (44, '(?i)^residual volume/total capacity',               'value_split', NULL, 'RV/TLC % paired with TLC in L (19f)'),
+  (44, '(?i)^residual volume/total capacity',               'value_split', NULL, 'RV/TLC % paired with TLC in L (15f)'),
   -- beats Part A's concept rule (suspect_concept) for 3023884
   (45, '(?i)^cholesterol in HDL/cholesterol.total .mass ratio.', 'value_split', NULL, 'values over 1 are total/HDL; stored inverted')
 AS t(priority, test_pattern, rule, unit_code, note);
 
--- 18a. Check: explicit rules without a valid UCUM code, and the reverse
+-- 14a. Check: explicit rules without a valid UCUM code, and the reverse
 SELECT r.*
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_rules r
 LEFT JOIN omop_vocab.concept ru
@@ -225,7 +225,7 @@ WHERE (r.rule = 'explicit') <> (ru.concept_id IS NOT NULL);
 
 -- COMMAND ----------
 
--- 18b. Review: tests each name rule hits, with the rule that wins.
+-- 14b. Review: tests each name rule hits, with the rule that wins.
 --      Look for tests a pattern catches by accident.
 WITH t AS (
   SELECT r.test_id, COALESCE(mc.concept_name, max(r.measurement_source_value)) AS test_name,
@@ -242,7 +242,7 @@ ORDER BY ru.priority, t.n DESC;
 
 -- COMMAND ----------
 
--- 18c. Value bands for value_split tests: value_min <= value < value_max,
+-- 14c. Value bands for value_split tests: value_min <= value < value_max,
 --      NULL meaning unbounded. A test's bands must cover every value with
 --      no overlap. method is value_split for a band with a unit, otherwise
 --      unitless, reciprocal (unitless, harmonized value is 1/value),
@@ -259,7 +259,7 @@ SELECT * FROM VALUES
   ('(?i)^protein/creatinine ratio, exte', 15D,  30D,  NULL,     'needs_review', 'fits neither'),
   ('(?i)^protein/creatinine ratio, exte', 30D,  NULL, 'mg/g',   'value_split',  NULL),
   -- RV/TLC: each exam has two records; the low one is TLC in L
-  -- (100 * RV / low = high in all 214 exams, 19f). TLC max 7.91; the six
+  -- (100 * RV / low = high in all 214 exams, 15f). TLC max 7.91; the six
   -- ratios under 8 pair with RV of 0.02-0.2 L, so they're bad data anyway.
   ('(?i)^residual volume/total capacity', NULL, 8D,   NULL,     'suspect_concept', 'TLC in L under the RV/TLC concept'),
   ('(?i)^residual volume/total capacity', 8D,   NULL, '%',      'value_split',  NULL),
@@ -268,7 +268,7 @@ SELECT * FROM VALUES
   ('(?i)^cholesterol in HDL/cholesterol.total .mass ratio.', 1D, NULL, NULL, 'reciprocal', 'total/HDL, inverted')
 AS t(test_pattern, value_min, value_max, unit_code, method, note);
 
--- 18d. Check: should be empty. Bad codes, gaps, overlaps, open ends.
+-- 14d. Check: should be empty. Bad codes, gaps, overlaps, open ends.
 WITH v AS (
   SELECT v.*, ru.concept_id AS ucum_concept_id,
          lag(v.value_max) OVER (PARTITION BY v.test_pattern ORDER BY v.value_min NULLS FIRST) AS prev_max,
@@ -296,9 +296,9 @@ SELECT * FROM (
 
 -- COMMAND ----------
 
--- ===== D2. Decisions =====
+-- ===== C2. Decisions =====
 
--- 19. One row per (partner, test)
+-- 15. One row per (partner, test)
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions AS
 WITH g AS (
   SELECT r.data_partner_id, r.test_id,
@@ -421,7 +421,7 @@ LEFT JOIN omop_vocab.concept su
 
 -- COMMAND ----------
 
--- 19a. Review: summary by method
+-- 15a. Review: summary by method
 SELECT unit_inference_method, COUNT(*) AS n_groups, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions
 GROUP BY 1
@@ -429,7 +429,7 @@ ORDER BY n_records DESC;
 
 -- COMMAND ----------
 
--- 19b. Review: every group with a unit or rule, biggest first. Compare med
+-- 15b. Review: every group with a unit or rule, biggest first. Compare med
 --      with evidence_median, and scan evidence_units for a test that carries
 --      two units close enough to both pass the factor-2 check (kg vs lb).
 SELECT d.unit_inference_method, d.test_name, d.data_partner_id, d.n,
@@ -442,8 +442,8 @@ ORDER BY d.n DESC;
 
 -- COMMAND ----------
 
--- 19c. Review: needs_review, one row per test across partners. These are
---      what the name rules (18) are for. evidence_units shows units the test
+-- 15c. Review: needs_review, one row per test across partners. These are
+--      what the name rules (14) are for. evidence_units shows units the test
 --      has elsewhere whose medians didn't fit.
 SELECT test_name, test_id, SUM(n) AS n, COUNT(*) AS n_partners,
        min(p05) AS min_p05, percentile_approx(med, 0.5) AS med_of_medians, max(p95) AS max_p95,
@@ -456,9 +456,9 @@ ORDER BY n DESC;
 
 -- COMMAND ----------
 
--- 19d. Review: value_split records by band, as the MERGE (20) will assign
+-- 15d. Review: value_split records by band, as the MERGE (16) will assign
 --      them. Each band's medians should look like its unit; band NULL means
---      the test matched no band pattern (18c) and goes to needs_review.
+--      the test matched no band pattern (14c) and goes to needs_review.
 SELECT r.data_partner_id, d.test_name, v.value_min, v.value_max, v.unit_code, v.method,
        COUNT(*) AS n, min(r.value_as_number) AS min_value,
        percentile_approx(r.value_as_number, 0.5) AS median, max(r.value_as_number) AS max_value
@@ -476,7 +476,7 @@ ORDER BY 1, 2, 3 NULLS FIRST;
 
 -- COMMAND ----------
 
--- 19e. Review: Residual volume/Total capacity (median 6.54) against the
+-- 15e. Review: Residual volume/Total capacity (median 6.54) against the
 --      lung-volume tests that have units. A median near TLC in L would
 --      mean the field holds TLC, not the ratio.
 SELECT k.test_id, COALESCE(mc.concept_name, max(k.measurement_source_value)) AS test_name,
@@ -493,7 +493,7 @@ ORDER BY test_name, n DESC;
 
 -- COMMAND ----------
 
--- 19f. Review: RV/TLC holds two values per exam (438 = 2 x 219), one near
+-- 15f. Review: RV/TLC holds two values per exam (438 = 2 x 219), one near
 --      3-6 and one near 30-40. If the low one is TLC in L, then
 --      100 * RV / low should equal high. One row per exam; match_2pt counts
 --      exams where they agree within 2 points.
@@ -518,12 +518,12 @@ ORDER BY person_id, measurement_date;
 
 -- COMMAND ----------
 
--- ===== D3. Apply Part D decisions =====
+-- ===== C3. Apply Part C decisions =====
 
--- 20. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id
+-- 16. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id
 --     is cleared so it never disagrees with harmonized_value_as_number;
---     re-run Part C from cell 14 afterwards to fill both.
---     value_split groups get one source row per band (18c), matched by value,
+--     Part D fills both.
+--     value_split groups get one source row per band (14c), matched by value,
 --     and the band's method; a group with no bands becomes needs_review.
 MERGE INTO hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized t
 USING (

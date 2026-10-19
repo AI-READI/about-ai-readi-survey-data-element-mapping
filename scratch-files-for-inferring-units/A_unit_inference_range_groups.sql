@@ -1,20 +1,23 @@
 -- Databricks notebook source
 -- Unit inference for measurement_unit_harmonized
 --
--- Paste each block that starts with %sql into its own Databricks cell.
--- A cell with several statements runs them in order; Databricks shows the
--- result of the LAST statement, which is the one to look at.
+-- Import with File > Import; each COMMAND block becomes a cell. A cell with
+-- several statements runs them in order; Databricks shows the result of the
+-- LAST statement, which is the one to look at.
 --
--- PART A (done): numeric records with NO unit but a reference range.
--- PART B (in progress): records with a unit STRING but no unit concept.
+-- Run order: A, B, C, D (files A_ to D_).
+-- PART A: numeric records with NO unit but a reference range.
+-- PART B: records with a unit STRING but no unit concept.
+-- PART C: numeric records with no unit and no reference range.
+-- PART D: conversion to a canonical unit per test.
 --
 -- unit_inference_method values written:
 --   Part A: dataset_unit, partner_unit, range_match, explicit, source_name,
 --           unitless, suspect_concept, needs_review, no_concept
 --   Part B: mapped_string, reused_mapping, unitless, not_a_unit, unmapped_string
 --
--- canonical_unit_* and harmonized_value_as_number are filled in a later
--- conversion step; only unitless records get harmonized_value_as_number now.
+-- canonical_unit_* and harmonized_value_as_number are filled in Part D;
+-- only unitless records get harmonized_value_as_number here.
 --
 -- Things learned the hard way:
 --   * OMOP UCUM codes write international units as [iU] (lowercase i), and

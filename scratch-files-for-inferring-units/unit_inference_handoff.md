@@ -21,20 +21,23 @@ unit (or is marked unitless), a canonical unit, and a harmonized value.
 Decision and rule tables (all in `hive_metastore.ehr_union_clean_metrics`):
 `unit_concept_rules`, `unit_inference_range_decisions`, `unit_source_name_rules`,
 `unit_inference_source_name_decisions`, `unit_string_map`, `unit_string_decisions`,
-and for Part C `unit_factors`, `unit_analytes`, `unit_analyte_bridges`,
-`canonical_unit_rules`, `unit_relabel_rules`, `unit_test_units`,
-`unit_test_analytes`, `unit_conversion_decisions`, `unit_conversion_medians`,
-plus the view `measurement_unit_keyed`; for Part D `unit_no_range_rules`,
+for Part C `unit_no_range_rules`, `unit_no_range_value_rules`,
 `unit_no_range_decisions`, and the views `unit_no_range_records`,
-`unit_no_range_evidence`.
+`unit_no_range_evidence`; and for Part D `unit_factors`, `unit_analytes`,
+`unit_analyte_bridges`, `canonical_unit_rules`, `unit_relabel_rules`,
+`unit_test_units`, `unit_test_analytes`, `unit_conversion_decisions`,
+`unit_conversion_medians`, plus the view `measurement_unit_keyed`.
 
 ## Notebooks (SQL files)
 
-- [unit_inference_range_groups.sql](unit_inference_range_groups.sql): Part A
-- [unit_inference_with_source_value_but_no_unit_concept.sql](unit_inference_with_source_value_but_no_unit_concept.sql): Part B
-- [unit_conversion.sql](unit_conversion.sql): Part C (conversion to canonical units)
-- [unit_inference_no_unit_no_range.sql](unit_inference_no_unit_no_range.sql): Part D
+Run in letter order. Cell numbers run on across the parts (Part A ends at
+9, B is 10-12, C is 13-16, D is 17-20).
+
+- [A_unit_inference_range_groups.sql](A_unit_inference_range_groups.sql): Part A
+- [B_unit_inference_with_source_value_but_no_unit_concept.sql](B_unit_inference_with_source_value_but_no_unit_concept.sql): Part B
+- [C_unit_inference_no_unit_no_range.sql](C_unit_inference_no_unit_no_range.sql): Part C
   (no unit string, no reference range)
+- [D_unit_conversion.sql](D_unit_conversion.sql): Part D (conversion to canonical units)
 
 ## Done
 
@@ -65,41 +68,7 @@ records, 223 strings.
 
 About 900 records remain without a unit (not_a_unit plus unmapped_string).
 
-**Part C.** Conversion to a canonical unit per test. A test is the measurement
-concept, or the measurement_source_value for concept 0.
-
-- Every unit maps to a base (`unit_factors`: base = slope * x + intercept).
-  Units with the same base convert directly. Equivalent codes are units with
-  the same factor (/min = {counts}/min, % = %{of'HGB}, [iU] = [U],
-  10\*3/mm3 = 10\*3/uL, and so on).
-- Analytes found by name pattern (`unit_analytes`) bridge mass, molar and
-  equivalent units using molar mass and charge. So mEq/L = mmol/L only for
-  monovalent ions, and HbA1c % <-> mmol/mol uses the IFCC formula.
-- `unit_relabel_rules` convert a unit as if it were another one. They cover
-  mis-coded units (S/H used for seconds/hours, [foz_us] on weights, `deg` on
-  temperature, `m2` on BMI, `mL/min` on eGFR) and a few labels the values
-  contradict (CEA "mg/dL"). A rule with no target blocks conversion. A rule
-  can be limited to one partner: partner 2084's "Body weight" `[lb_us]`
-  records are ounces (raw median 2,847; partner 8469's pounds match its kg
-  records per person, cell 16c).
-- Decisions are per (partner, test, unit); the canonical unit is per test,
-  chosen across partners.
-- The canonical unit is the most common one (equivalent codes counted
-  together), unless a name-pattern rule in `canonical_unit_rules` sets it
-  (body weight kg, height cm, temperature Cel, HbA1c %, 24 h urine protein
-  mg/(24.h)).
-- The 15e review compares the median converted value with the median of
-  records already in the canonical unit. That's how the relabels were found.
-
-| Method | Meaning |
-|---|---|
-| identity | already in the canonical unit (possibly after a relabel) |
-| same_base | converted by unit factors |
-| analyte_bridge | converted through molar mass or charge |
-| no_conversion | different quantity under one test, or no fixed factor (log viral loads, Lp(a), arbitrary antibody units) |
-| blocked | relabel rule says don't convert |
-
-**Part D.** Numeric records with no unit string, no unit concept and no
+**Part C.** Numeric records with no unit string, no unit concept and no
 reference range: 1,066,417 records, almost all from one partner, mostly
 flowsheet and exam data. About 100 tests cover 97% of them, and most of those
 tests have no labeled records to copy a unit from, so name rules
@@ -119,7 +88,7 @@ records and never uses its own output as evidence.
 value_split covers body temperature (Cel / [degF]), "Protein/Creatinine
 Ratio, Exte" (mg/mg / mg/g) and "Residual volume/Total capacity". That last
 test holds two records per exam: RV/TLC in % and TLC in L (100 * RV / low =
-high in all 214 exams, cell 19f). Values under 8 are TLC and get
+high in all 214 exams, cell 15f). Values under 8 are TLC and get
 suspect_concept. "Cholesterol in HDL/Cholesterol.total" (concept 3023884)
 values over 1 are total/HDL and get reciprocal; Part A's concept rule still
 marks that concept's Part A records suspect_concept. SVR is `dyn.sec/cm5` (32703) and SVR index `dyn.s/cm5/m2`
@@ -129,16 +98,52 @@ Result: 510,927 explicit, 476,218 unitless (6,482 of them reciprocal),
 73,887 copied, 365 source_name, 3,794 not_a_quantity, 225 suspect_concept
 (TLC under RV/TLC), 1,099 needs_review, 340 value_split.
 
-Run order is A, B, D, then C: Part D's apply clears canonical_unit_concept_id
-and the harmonized value on its records, and Part C fills them back in.
+**Part D.** Conversion to a canonical unit per test. A test is the measurement
+concept, or the measurement_source_value for concept 0.
 
-Numeric records after Parts A-D and Part C (16a): 6,534,551 in canonical
+- Every unit maps to a base (`unit_factors`: base = slope * x + intercept).
+  Units with the same base convert directly. Equivalent codes are units with
+  the same factor (/min = {counts}/min, % = %{of'HGB}, [iU] = [U],
+  10\*3/mm3 = 10\*3/uL, and so on).
+- Analytes found by name pattern (`unit_analytes`) bridge mass, molar and
+  equivalent units using molar mass and charge. So mEq/L = mmol/L only for
+  monovalent ions, and HbA1c % <-> mmol/mol uses the IFCC formula.
+- `unit_relabel_rules` convert a unit as if it were another one. They cover
+  mis-coded units (S/H used for seconds/hours, [foz_us] on weights, `deg` on
+  temperature, `m2` on BMI, `mL/min` on eGFR) and a few labels the values
+  contradict (CEA "mg/dL"). A rule with no target blocks conversion. A rule
+  can be limited to one partner: partner 2084's "Body weight" `[lb_us]`
+  records are ounces (raw median 2,847; partner 8469's pounds match its kg
+  records per person, cell 20c).
+- Decisions are per (partner, test, unit); the canonical unit is per test,
+  chosen across partners.
+- The canonical unit is the most common one (equivalent codes counted
+  together), unless a name-pattern rule in `canonical_unit_rules` sets it
+  (body weight kg, height cm, temperature Cel, HbA1c %, 24 h urine protein
+  mg/(24.h)).
+- The 19e review compares the median converted value with the median of
+  records already in the canonical unit. That's how the relabels were found.
+
+| Method | Meaning |
+|---|---|
+| identity | already in the canonical unit (possibly after a relabel) |
+| same_base | converted by unit factors |
+| analyte_bridge | converted through molar mass or charge |
+| no_conversion | different quantity under one test, or no fixed factor (log viral loads, Lp(a), arbitrary antibody units) |
+| blocked | relabel rule says don't convert |
+
+Run order is A, B, C, D. Part C uses units from A and B as evidence, and
+Part D converts the units all three assign. Part C's apply clears
+canonical_unit_concept_id and the harmonized value on its records, so a Part C
+re-run always needs a Part D re-run after it.
+
+Numeric records after Parts A-D (cell 20a): 6,534,551 in canonical
 unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
 
-1. **Part D leftovers** still needs_review (1,099 records): log viral
+1. **Part C leftovers** still needs_review (1,099 records): log viral
    loads (left unmapped, as in Part B), Treadmill MPH (28; OMOP UCUM has no
    mile per hour), and tests with no rule yet: Creatinine/Protein [Mass
    Ratio] in Urine (94, median 235, looks like protein/creatinine mg/g),
@@ -184,7 +189,7 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 - Notebook files are in Databricks source format so Siggie can import them
   (Workspace > Import > File) without splitting cells by hand: first line
   `-- Databricks notebook source`, cells separated by
-  `-- COMMAND ----------`, no `%sql` lines. Parts A, C and D use this.
+  `-- COMMAND ----------`, no `%sql` lines.
 - After the first import, changed cells come in chat as paste-ready `%sql`
   blocks, with a note saying which cells changed and that nothing else did.
 - Every query whose result needs looking at gets its own cell;
