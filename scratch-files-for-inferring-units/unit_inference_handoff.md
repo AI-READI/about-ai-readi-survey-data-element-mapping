@@ -108,6 +108,7 @@ records and never uses its own output as evidence.
 | explicit / unitless / not_a_quantity / needs_review | name rule (not_a_quantity: codes, IDs, admin fields such as EKG impression codes, HLA alleles, case numbers) |
 | partner_unit / dataset_unit / unitless | copied from labeled or unitless records of the same test, same partner first; group median within a factor of 2 of the candidate's |
 | source_name | concept 0, Part A's source-name rules (no median check, so name rules override the wrong ones) |
+| value_split | group holds two units; each record gets the unit of its value band (`unit_no_range_value_rules`), records between bands get needs_review |
 
 Result: 510,414 explicit, 469,711 unitless, 73,887 copied, 365 source_name,
 3,794 not_a_quantity, 6,482 suspect_concept (HDL/total), 1,764 needs_review.
@@ -119,16 +120,20 @@ unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
 ## Not done
 
-1. **Part D leftovers** (needs_review, 1,764 records):
-   - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83): each
-     group mixes two units (Cel and [degF]; mg/mg and mg/g). Need a split by
-     value, which the per-group design doesn't do.
-   - Systemic vascular resistance and its index (513): need the OMOP UCUM
-     spelling of dyn.s/cm5.
-   - Treadmill MPH (28): `[mi_i]/h` isn't an OMOP UCUM concept.
-   - Residual volume/Total capacity (438): median 6.54 fits neither a
-     fraction nor a percent.
-   - Log viral loads (left unmapped, as in Part B), RAST classes, one-offs.
+1. **Part D leftovers** (needs_review, 1,764 records). Code written, not yet
+   run:
+   - Body temperature (44) and "Protein/Creatinine Ratio, Exte" (83):
+     value_split, bands in cell 18c (Cel < 45 <= gap < 80 <= [degF];
+     mg/mg < 15 <= gap < 30 <= mg/g). Check 19d.
+   - Systemic vascular resistance and its index (513): rules 41/42 guess
+     `dyn.s.cm-5` and `dyn.s.cm-5.m2`. Lookup 17d shows the real spelling
+     (unit strings `dynes-sec/cm5` already carry a concept elsewhere).
+   - Treadmill MPH (28): no rule; 17d also looks for a mile-per-hour concept.
+   - Residual volume/Total capacity (438): review 19e. Median 6.54 is close
+     to TLC in liters, so the field may hold TLC.
+   - RAST classes: rule 43 (unitless) on "radioallergosorbent"; test names
+     not checked, see 18b.
+   - Log viral loads (left unmapped, as in Part B) and one-offs remain.
 2. **Flagged items to look at:**
    - suspect_concept records: CD4+CD8+ cells/cells that look like CD4/CD8
      ratios, "HDL/total" that is total/HDL, "total T4" that is free T4, an

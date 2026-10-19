@@ -7,7 +7,8 @@
 -- measurement concept, or 'src:<source value>' for concept 0).
 -- Each group gets the first of:
 --   1. unit_no_range_rules  name pattern on the test name (unitless,
---                           explicit, suspect_concept, not_a_quantity)
+--                           explicit, suspect_concept, not_a_quantity,
+--                           value_split)
 --   2. unit_concept_rules   Part A's hand rules by concept (pH, INR, ...)
 --   3. partner_unit / dataset_unit / unitless
 --                           copied from records of the same test that have a
@@ -18,6 +19,9 @@
 --   4. source_name          concept 0 only: Part A's unit_source_name_rules
 --   5. needs_review
 -- Method names are Part A's; range_high IS NULL tells Part D records apart.
+-- value_split groups hold two units; the MERGE (20) gives each record the
+-- unit of the value band it falls in (unit_no_range_value_rules), and
+-- records between bands get needs_review.
 --
 -- Records in scope are picked by their RAW columns (no unit string, no unit
 -- concept, no range_high), never by inferred_unit_concept_id, so rerunning
@@ -106,6 +110,27 @@ ORDER BY t.n DESC;
 
 -- COMMAND ----------
 
+-- 17d. Lookup: OMOP UCUM spellings for units the name rules need.
+--      'data' rows: the unit concepts that unit strings like dynes-sec/cm5
+--      and mph already carry in the table. 'UCUM' rows: candidate concepts.
+--      Rules 41 and 42 in cell 18 (SVR) guess dyn.s.cm-5 and
+--      dyn.s.cm-5.m2; fix them to match. Treadmill MPH gets rule 25 only
+--      if a mile-per-hour concept turns up.
+SELECT 'data' AS src, m.unit_source_value AS unit_string, u.concept_id, u.concept_code,
+       u.concept_name, u.vocabulary_id, u.invalid_reason, COUNT(*) AS n
+FROM ehr_union_clean.measurement m
+JOIN omop_vocab.concept u ON u.concept_id = m.unit_concept_id
+WHERE m.unit_source_value RLIKE '(?i)dyn|mph|mi/h|mile'
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+UNION ALL
+SELECT 'UCUM', NULL, concept_id, concept_code, concept_name, vocabulary_id, invalid_reason, NULL
+FROM omop_vocab.concept
+WHERE vocabulary_id = 'UCUM'
+  AND (concept_code RLIKE 'dyn|mi_' OR concept_name RLIKE '(?i)dyne|mile')
+ORDER BY src, n DESC, concept_code;
+
+-- COMMAND ----------
+
 -- ===== D1. Hand rules by test name. Last result: check, should be empty =====
 
 -- 18. Rules on the test name (concept name, or source value for concept 0).
@@ -117,6 +142,7 @@ ORDER BY t.n DESC;
 --     rule = 'unitless' | 'explicit' (unit_code required) | 'suspect_concept'
 --          | 'not_a_quantity' (codes, identifiers, admin fields)
 --          | 'needs_review' (keeps a test from getting a unit by later steps)
+--          | 'value_split' (two units told apart by value; bands in 18c)
 --     Name rules beat everything after them, including Part A's source-name
 --     rules, which have no median check.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_rules AS
@@ -158,13 +184,13 @@ SELECT * FROM VALUES
   -- times, speeds
   (23, '(?i)^sleep latency|^total sleep time|^total minutes walked', 'explicit', 'min', NULL),
   (24, '(?i)^elapsed days|^days sensor worn',               'explicit', 'd', NULL),
-  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept)
+  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept; see 17d)
   -- percentages and units in the name
   (26, '(?i)predicted|%pred|percent|%|spo2|^oximetry|^infusion O2|/leukocytes in blood', 'explicit', '%', NULL),
   (27, '(?i)mg/dl$',                                        'explicit', 'mg/dL', NULL),
   -- from the 19b/19c review: groups that mix units, and tests whose median
   -- missed the factor-2 check or that Part A's source-name rules got wrong
-  (28, '(?i)^body temperature$|^protein/creatinine ratio, exte', 'needs_review', NULL,
+  (28, '(?i)^body temperature$|^protein/creatinine ratio, exte', 'value_split', NULL,
        'one group holds two units: Cel and [degF]; mg/mg and mg/g'),
   (29, '(?i)^ph[ ,-]|saturation fraction|^cholesterol/HDL ratio|^apolipoprotein B/apolipoprotein A|^dRVVT|^TID$',
        'unitless', NULL, 'pH, saturation fractions, ratios'),
@@ -178,7 +204,11 @@ SELECT * FROM VALUES
   (37, '(?i)^immunoglobulin G, external',                   'explicit', 'mg/dL', 'value 637'),
   (38, '(?i)^cortisol stimulation interval',                'explicit', 'min', NULL),
   (39, '(?i)^glucose tolerance dose info',                  'explicit', 'g', '75 g dose'),
-  (40, '(?i)^1,25 dihydroxy vitamin d',                     'explicit', 'pg/mL', NULL)
+  (40, '(?i)^1,25 dihydroxy vitamin d',                     'explicit', 'pg/mL', NULL),
+  -- Part D leftovers. SVR codes from the 17d lookup.
+  (41, '(?i)^systemic vascular resistance index$',          'explicit', 'dyn.s.cm-5.m2', 'normal 1970-2390'),
+  (42, '(?i)^systemic vascular resistance$',                'explicit', 'dyn.s.cm-5', 'normal 800-1200'),
+  (43, '(?i)radioallergosorbent',                           'unitless', NULL, 'RAST class 0-6')
 AS t(priority, test_pattern, rule, unit_code, note);
 
 -- 18a. Check: explicit rules without a valid UCUM code, and the reverse
@@ -206,6 +236,47 @@ SELECT ru.priority, ru.test_pattern, ru.rule, ru.unit_code, t.test_name, t.n, t.
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_rules ru
 LEFT JOIN t ON t.test_name RLIKE ru.test_pattern
 ORDER BY ru.priority, t.n DESC;
+
+-- COMMAND ----------
+
+-- 18c. Value bands for value_split tests: value_min <= value < value_max,
+--      NULL meaning unbounded. A test's bands must cover every value with
+--      no overlap; a band with no unit_code sends its records to
+--      needs_review. Each value_split test must match one test_pattern only.
+CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules AS
+SELECT * FROM VALUES
+  -- body temperature: 45 Cel is beyond survivable, 80 [degF] is deep hypothermia
+  ('(?i)^body temperature$',             CAST(NULL AS DOUBLE), 45D,  'Cel',    NULL),
+  ('(?i)^body temperature$',             45D,  80D,  CAST(NULL AS STRING),     'fits neither'),
+  ('(?i)^body temperature$',             80D,  NULL, '[degF]', NULL),
+  -- protein/creatinine: mg/mg runs 0.05-10; mg/g under 30 is implausibly low
+  ('(?i)^protein/creatinine ratio, exte', NULL, 15D,  'mg/mg',  NULL),
+  ('(?i)^protein/creatinine ratio, exte', 15D,  30D,  NULL,     'fits neither'),
+  ('(?i)^protein/creatinine ratio, exte', 30D,  NULL, 'mg/g',   NULL)
+AS t(test_pattern, value_min, value_max, unit_code, note);
+
+-- 18d. Check: should be empty. Bad codes, gaps, overlaps, open ends.
+WITH v AS (
+  SELECT v.*, ru.concept_id AS ucum_concept_id,
+         lag(v.value_max) OVER (PARTITION BY v.test_pattern ORDER BY v.value_min NULLS FIRST) AS prev_max,
+         ROW_NUMBER() OVER (PARTITION BY v.test_pattern ORDER BY v.value_min NULLS FIRST) AS rn,
+         COUNT(*) OVER (PARTITION BY v.test_pattern) AS n_bands
+  FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules v
+  LEFT JOIN omop_vocab.concept ru
+    ON  ru.vocabulary_id = 'UCUM'
+    AND ru.concept_code = v.unit_code
+    AND ru.invalid_reason IS NULL
+)
+SELECT * FROM (
+  SELECT CASE WHEN v.unit_code IS NOT NULL AND v.ucum_concept_id IS NULL THEN 'not a UCUM code'
+              WHEN v.rn = 1 AND v.value_min IS NOT NULL                  THEN 'first band has a lower bound'
+              WHEN v.rn = v.n_bands AND v.value_max IS NOT NULL          THEN 'last band has an upper bound'
+              WHEN v.rn > 1 AND NOT (v.value_min <=> v.prev_max)         THEN 'gap or overlap with previous band'
+              WHEN v.value_min >= v.value_max                            THEN 'empty band'
+         END AS problem,
+         v.*
+  FROM v
+) WHERE problem IS NOT NULL;
 
 -- COMMAND ----------
 
@@ -369,16 +440,68 @@ ORDER BY n DESC;
 
 -- COMMAND ----------
 
+-- 19d. Review: value_split records by band, as the MERGE (20) will assign
+--      them. Each band's medians should look like its unit; band NULL means
+--      the test matched no band pattern (18c) and goes to needs_review.
+SELECT r.data_partner_id, d.test_name, v.value_min, v.value_max, v.unit_code,
+       COUNT(*) AS n, min(r.value_as_number) AS min_value,
+       percentile_approx(r.value_as_number, 0.5) AS median, max(r.value_as_number) AS max_value
+FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_records r
+JOIN hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions d
+  ON  d.data_partner_id = r.data_partner_id
+  AND d.test_id = r.test_id
+  AND d.unit_inference_method = 'value_split'
+LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules v
+  ON  d.test_name RLIKE v.test_pattern
+  AND (v.value_min IS NULL OR r.value_as_number >= v.value_min)
+  AND (v.value_max IS NULL OR r.value_as_number <  v.value_max)
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY 1, 2, 3 NULLS FIRST;
+
+-- COMMAND ----------
+
+-- 19e. Review: Residual volume/Total capacity (median 6.54) against the
+--      lung-volume tests that have units. A median near TLC in L would
+--      mean the field holds TLC, not the ratio.
+SELECT k.test_id, COALESCE(mc.concept_name, max(k.measurement_source_value)) AS test_name,
+       u.concept_code AS unit, k.range_high IS NULL AND k.unit_source_value IS NULL AS part_d,
+       COUNT(*) AS n,
+       percentile_approx(k.value_as_number, array(0.05, 0.25, 0.5, 0.75, 0.95)) AS pct
+FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
+LEFT JOIN omop_vocab.concept mc ON mc.concept_id = NULLIF(k.measurement_concept_id, 0)
+LEFT JOIN omop_vocab.concept u  ON u.concept_id = k.effective_unit_concept_id
+WHERE COALESCE(mc.concept_name, k.measurement_source_value)
+        RLIKE '(?i)residual volume|total (lung )?capacity|^TLC|RV/TLC'
+GROUP BY k.test_id, mc.concept_name, u.concept_code, 4
+ORDER BY test_name, n DESC;
+
+-- COMMAND ----------
+
 -- ===== D3. Apply Part D decisions =====
 
 -- 20. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id
 --     is cleared so it never disagrees with harmonized_value_as_number;
 --     re-run Part C from cell 14 afterwards to fill both.
+--     value_split groups get one source row per band (18c), matched by value;
+--     bands with no unit, or a group with no bands, become needs_review.
 MERGE INTO hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized t
 USING (
-  SELECT d.*, u.concept_code AS unit_code
+  SELECT d.data_partner_id, d.test_id, v.value_min, v.value_max,
+         CASE WHEN d.unit_inference_method <> 'value_split' THEN d.unit_inference_method
+              WHEN v.unit_code IS NOT NULL                  THEN 'value_split'
+              ELSE 'needs_review'
+         END AS unit_inference_method,
+         COALESCE(vu.concept_id, d.inferred_unit_concept_id) AS inferred_unit_concept_id,
+         COALESCE(v.unit_code, u.concept_code) AS unit_code
   FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions d
+  LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_no_range_value_rules v
+    ON  d.unit_inference_method = 'value_split'
+    AND d.test_name RLIKE v.test_pattern
   LEFT JOIN omop_vocab.concept u ON u.concept_id = d.inferred_unit_concept_id
+  LEFT JOIN omop_vocab.concept vu
+    ON  vu.vocabulary_id = 'UCUM'
+    AND vu.concept_code = v.unit_code
+    AND vu.invalid_reason IS NULL
 ) d
 ON  t.data_partner_id = d.data_partner_id
 AND d.test_id = CASE WHEN COALESCE(t.measurement_concept_id, 0) = 0
@@ -389,6 +512,8 @@ AND t.value_as_number IS NOT NULL
 AND t.unit_source_value IS NULL
 AND COALESCE(t.unit_concept_id, 0) = 0
 AND t.range_high IS NULL
+AND (d.value_min IS NULL OR t.value_as_number >= d.value_min)
+AND (d.value_max IS NULL OR t.value_as_number <  d.value_max)
 WHEN MATCHED THEN UPDATE SET
   t.unit_inference_method      = d.unit_inference_method,
   t.inferred_unit_concept_id   = d.inferred_unit_concept_id,
