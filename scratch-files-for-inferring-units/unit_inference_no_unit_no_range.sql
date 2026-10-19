@@ -1,4 +1,4 @@
-%sql
+-- Databricks notebook source
 -- Unit inference, Part D: numeric records with no unit string, no unit
 -- concept and no reference range (~1.07M records, mostly flowsheet:
 -- ETCO2, pain scores, tidal volume, MAP).
@@ -7,7 +7,7 @@
 -- measurement concept, or 'src:<source value>' for concept 0).
 -- Each group gets the first of:
 --   1. unit_no_range_rules  name pattern on the test name (unitless,
---                           explicit, suspect_concept)
+--                           explicit, suspect_concept, not_a_quantity)
 --   2. unit_concept_rules   Part A's hand rules by concept (pH, INR, ...)
 --   3. partner_unit / dataset_unit / unitless
 --                           copied from records of the same test that have a
@@ -26,7 +26,8 @@
 -- After D4, re-run Part C from cell 14 (unit_conversion.sql) so the new
 -- units get converted.
 --
--- Each %sql block is one cell. Blocks that end in a SELECT show its result.
+-- Import with File > Import; each COMMAND block becomes a cell. Blocks that
+-- end in a SELECT show its result.
 
 
 -- ===== D0. Sizing =====
@@ -66,13 +67,13 @@ LEFT JOIN omop_vocab.concept mt ON mt.concept_id = r.measurement_type_concept_id
 GROUP BY 1, 2, 3
 ORDER BY n DESC;
 
+-- COMMAND ----------
 
-%sql
 -- 17c. Review: one row per test, biggest first. cum_pct shows how many tests
 --      cover most of the records. frac_integer near 1 with a small range
---      suggests a score; n_text_value counts value_source_value with letters
---      or % in it (a unit hiding in the value?); n_evidence is how many
+--      or few distinct values suggest a score; n_evidence is how many
 --      records of the same test have a unit to copy.
+--      (The table has no value_source_value column.)
 WITH t AS (
   SELECT r.test_id,
          COALESCE(mc.concept_name, max(r.measurement_source_value)) AS test_name,
@@ -82,8 +83,7 @@ WITH t AS (
          min(r.value_as_number) AS min_value,
          max(r.value_as_number) AS max_value,
          avg(CASE WHEN r.value_as_number = floor(r.value_as_number) THEN 1D ELSE 0D END) AS frac_integer,
-         COUNT_IF(r.value_source_value RLIKE '[A-Za-z%]') AS n_text_value,
-         slice(collect_set(r.value_source_value), 1, 5) AS sample_values
+         COUNT(DISTINCT r.value_as_number) AS n_distinct
   FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_records r
   LEFT JOIN omop_vocab.concept mc ON mc.concept_id = NULLIF(r.measurement_concept_id, 0)
   GROUP BY r.test_id, mc.concept_name
@@ -98,25 +98,87 @@ SELECT t.test_name, t.test_id, t.n,
        round(100 * SUM(t.n) OVER (ORDER BY t.n DESC ROWS UNBOUNDED PRECEDING)
                  / SUM(t.n) OVER (), 1) AS cum_pct,
        t.n_partners, t.min_value, t.pct[0] AS p05, t.pct[1] AS median, t.pct[2] AS p95,
-       t.max_value, round(t.frac_integer, 2) AS frac_integer, t.n_text_value,
-       COALESCE(ev.n_evidence, 0) AS n_evidence, t.sample_values
+       t.max_value, round(t.frac_integer, 2) AS frac_integer, t.n_distinct,
+       COALESCE(ev.n_evidence, 0) AS n_evidence
 FROM t
 LEFT JOIN ev ON ev.test_id = t.test_id
 ORDER BY t.n DESC;
 
+-- COMMAND ----------
 
-%sql
 -- ===== D1. Hand rules by test name. Last result: check, should be empty =====
 
 -- 18. Rules on the test name (concept name, or source value for concept 0).
 --     Java regexes; lowest priority wins. (?i) covers the whole pattern, so
---     anchor short tokens or use (?-i:...). Starter rows only: add from the
---     17c and 19c reviews.
+--     anchor short tokens or use (?-i:...). Brackets and parens are matched
+--     with . or a one-character class ([(], .#]) to avoid backslashes.
+--     Written from the 17c review; tests with labeled records elsewhere are
+--     mostly left to copy their unit (step 3).
 --     rule = 'unitless' | 'explicit' (unit_code required) | 'suspect_concept'
+--          | 'not_a_quantity' (codes, identifiers, admin fields)
+--          | 'needs_review' (keeps a test from getting a unit by later steps)
+--     Name rules beat everything after them, including Part A's source-name
+--     rules, which have no median check.
 CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_no_range_rules AS
 SELECT * FROM VALUES
-  (1, '(?i)score|glasgow coma|braden|apgar|richmond agitation', 'unitless', CAST(NULL AS STRING), 'scores'),
-  (2, '(?i)^pain|pain (level|intensity|rating|severity)',       'unitless', NULL, 'pain scales')
+  -- not measurements
+  ( 1, '(?i)case number|allele|tech id|patient id|collect (date|time)|identifier|^ISBT|^EKG impression$|^report$|^[.]$|^service comment$|^lab test requested$|^additional test information$|^course number$|^unit division$|^tube number$|^sample to use$|^custom time|^save specimen',
+       'not_a_quantity', CAST(NULL AS STRING), 'codes, IDs, admin fields'),
+  -- before the % rule: these names contain % but aren't percentages
+  ( 2, '(?i)[(]min[)]',                                     'explicit', 'min', 'sleep study: SpO2 < 90% (min), recording duration (min)'),
+  ( 3, '(?-i:AHI|RDI)|^ODI|(?i)apnea index|arousal index|plm index', 'explicit', '/h', 'sleep study events per hour'),
+  -- counts, scores, other unitless
+  ( 4, '(?i)number of|.#]|^units ordered$|fractions delivered', 'unitless', NULL, 'counts'),
+  ( 5, '(?i)score|scale|coma|morse fall|withdrawal assessment|physical status classification|train of four|NRS_2002|activities of daily living|abbreviated mental test|bispectral index|angina index',
+       'unitless', NULL, 'scores and scales'),
+  ( 6, '(?i)^pain|pain (level|intensity|rating|severity)',  'unitless', NULL, 'pain scales'),
+  ( 7, '(?i)mom$|ct value|cup disc ratio|^E/E. ratio|^albumin/globulin', 'unitless', NULL, 'multiples of median, Ct values, ratios'),
+  -- vitals and ventilator
+  ( 8, '(?i)^end tidal carbon dioxide|mean arterial pressure|^central venous pressure|intraocular pressure|^treadmill BP',
+       'explicit', 'mm[Hg]', 'ETCO2 median 35, MAP 81-88, CVP 9, IOP 14'),
+  ( 9, '(?i)airway pressure|inspiratory pressure|^PEEP',   'explicit', 'cm[H2O]', 'medians 11-21'),
+  (10, '(?i)^expiratory tidal volume|^fluid (output|intake)|^parenteral fluid input',
+       'explicit', 'mL', 'tidal volume median 461; fluid totals'),
+  (11, '(?i)^respiratory rate$|(treadmill|infusion|custom) HR|^pulse rate', 'explicit', '/min', NULL),
+  (12, '(?i)^body surface area',                            'explicit', 'm2', 'median 1.97'),
+  -- EKG
+  (13, '(?i)^(R-R|Q-T|P-R|PP) interval|^QRS duration',      'explicit', 'ms', NULL),
+  (14, '(?i)^(P wave|QRS|T wave) axis',                     'explicit', 'deg', NULL),
+  -- eye
+  (15, '(?i)corneal thickness',                             'explicit', 'um', 'median 550'),
+  (16, '(?i)margin reflex distance|levator lift|exophthalmometry|scleral show', 'explicit', 'mm', NULL),
+  -- pulmonary function
+  (17, '(?i)^forced vital capacity .volume.|^residual volume --pre', 'explicit', 'L', NULL),
+  (18, '(?i)^gas flow FEV|^FEF25-75-Pre$',                  'explicit', 'L/s', NULL),
+  (19, '(?i)^diffusion capacity.carbon monoxide$',          'explicit', 'mL/min/mm[Hg]', 'median 16.1'),
+  -- cardiac devices
+  (20, '(?i)impedance',                                     'explicit', 'Ohm', NULL),
+  (21, '(?i)intrinsic amplitude',                           'explicit', 'mV', NULL),
+  (22, '(?i)threshold amplitude|^battery voltage',          'explicit', 'V', NULL),
+  -- times, speeds
+  (23, '(?i)^sleep latency|^total sleep time|^total minutes walked', 'explicit', 'min', NULL),
+  (24, '(?i)^elapsed days|^days sensor worn',               'explicit', 'd', NULL),
+  -- (no rule for Treadmill MPH: [mi_i]/h isn't an OMOP UCUM concept)
+  -- percentages and units in the name
+  (26, '(?i)predicted|%pred|percent|%|spo2|^oximetry|^infusion O2|/leukocytes in blood', 'explicit', '%', NULL),
+  (27, '(?i)mg/dl$',                                        'explicit', 'mg/dL', NULL),
+  -- from the 19b/19c review: groups that mix units, and tests whose median
+  -- missed the factor-2 check or that Part A's source-name rules got wrong
+  (28, '(?i)^body temperature$|^protein/creatinine ratio, exte', 'needs_review', NULL,
+       'one group holds two units: Cel and [degF]; mg/mg and mg/g'),
+  (29, '(?i)^ph[ ,-]|saturation fraction|^cholesterol/HDL ratio|^apolipoprotein B/apolipoprotein A|^dRVVT|^TID$',
+       'unitless', NULL, 'pH, saturation fractions, ratios'),
+  (30, '(?i)^hepatitis B virus surface Ab .units/volume.', 'explicit', '10*-3.[iU]/mL', 'labeled records are mIU/mL; most values near 0'),
+  (31, '(?i)^tacrolimus, external',                         'explicit', 'ng/mL', NULL),
+  (32, '(?i)^mycophenolic acid, external',                  'explicit', 'ug/mL', NULL),
+  (33, '(?i)^(erythrocytes|leukocytes) .#/area. in urine sediment', 'explicit', '/[HPF]', 'values capped at 50'),
+  (34, '(?i)^battery remaining longevity',                  'explicit', 'mo', 'median 59; labeled records are years, median 7.5'),
+  (35, '(?i)^creatinine clearance',                         'explicit', 'mL/min', NULL),
+  (36, '(?i)^calcium/24 hr',                                'explicit', 'mg/(24.h)', NULL),
+  (37, '(?i)^immunoglobulin G, external',                   'explicit', 'mg/dL', 'value 637'),
+  (38, '(?i)^cortisol stimulation interval',                'explicit', 'min', NULL),
+  (39, '(?i)^glucose tolerance dose info',                  'explicit', 'g', '75 g dose'),
+  (40, '(?i)^1,25 dihydroxy vitamin d',                     'explicit', 'pg/mL', NULL)
 AS t(priority, test_pattern, rule, unit_code, note);
 
 -- 18a. Check: explicit rules without a valid UCUM code, and the reverse
@@ -128,8 +190,8 @@ LEFT JOIN omop_vocab.concept ru
   AND ru.invalid_reason IS NULL
 WHERE (r.rule = 'explicit') <> (ru.concept_id IS NOT NULL);
 
+-- COMMAND ----------
 
-%sql
 -- 18b. Review: tests each name rule hits, with the rule that wins.
 --      Look for tests a pattern catches by accident.
 WITH t AS (
@@ -145,8 +207,8 @@ FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_rules ru
 LEFT JOIN t ON t.test_name RLIKE ru.test_pattern
 ORDER BY ru.priority, t.n DESC;
 
+-- COMMAND ----------
 
-%sql
 -- ===== D2. Decisions =====
 
 -- 19. One row per (partner, test)
@@ -270,16 +332,16 @@ LEFT JOIN omop_vocab.concept su
   AND su.concept_code = s.unit_code
   AND su.invalid_reason IS NULL;
 
+-- COMMAND ----------
 
-%sql
 -- 19a. Review: summary by method
 SELECT unit_inference_method, COUNT(*) AS n_groups, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions
 GROUP BY 1
 ORDER BY n_records DESC;
 
+-- COMMAND ----------
 
-%sql
 -- 19b. Review: every group with a unit or rule, biggest first. Compare med
 --      with evidence_median, and scan evidence_units for a test that carries
 --      two units close enough to both pass the factor-2 check (kg vs lb).
@@ -291,8 +353,8 @@ LEFT JOIN omop_vocab.concept u ON u.concept_id = d.inferred_unit_concept_id
 WHERE d.unit_inference_method <> 'needs_review'
 ORDER BY d.n DESC;
 
+-- COMMAND ----------
 
-%sql
 -- 19c. Review: needs_review, one row per test across partners. These are
 --      what the name rules (18) are for. evidence_units shows units the test
 --      has elsewhere whose medians didn't fit.
@@ -305,8 +367,8 @@ WHERE unit_inference_method = 'needs_review'
 GROUP BY test_name, test_id
 ORDER BY n DESC;
 
+-- COMMAND ----------
 
-%sql
 -- ===== D3. Apply Part D decisions =====
 
 -- 20. Apply. Rerunnable: it rewrites the same rows. canonical_unit_concept_id

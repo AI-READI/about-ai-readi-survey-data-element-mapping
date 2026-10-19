@@ -102,8 +102,10 @@ Numeric records after Part C: 5,949,036 in canonical unit, 33,039 unitless,
 1. **No unit string, no reference range:** 1,066,511 numeric records. Mostly
    flowsheet data (ETCO2, pain scores, tidal volume, MAP). Probably many
    unitless scores and single-unit vitals. Part D notebook is written but not
-   run: sizing (17b, 17c), name rules (`unit_no_range_rules`, two starter
-   rows for scores and pain scales), decisions per (partner, test) copying
+   run past 17c. 17b/17c: almost all one partner; ~100 flowsheet/exam tests
+   cover 97%, most with no labeled records of the same test to copy from.
+   Name rules (`unit_no_range_rules`) written from 17c; they add a new method
+   `not_a_quantity` for codes, IDs and admin fields. Decisions per (partner, test) copying
    units from labeled records of the same test with Part A's factor-2 median
    check, then a MERGE. Next: run 17-17c, write name rules from 17c, run 19,
    review 19a-19c, apply 20, re-run Part C from cell 14.
@@ -125,6 +127,9 @@ Numeric records after Part C: 5,949,036 in canonical unit, 33,039 unitless,
 
 ## Gotchas learned
 
+- The measurement table has no `value_source_value` column, so there's no raw
+  value text to look for units in.
+
 - OMOP UCUM codes write international units as `[iU]` (lowercase i) and
   prefixes as powers of ten: `10*-6.[iU]/mL` = uIU/mL, `10*-3.eq/L` = mEq/L,
   `mL/min/(173.10*-2.m2)` = eGFR units, `[lb_us]` = pound.
@@ -142,8 +147,14 @@ Numeric records after Part C: 5,949,036 in canonical unit, 33,039 unitless,
 ## Working conventions
 
 - Claude can't reach Databricks; Siggie runs each query and pastes results back.
-- SQL comes as paste-ready cells: each starts with `%sql`, no
-  `-- COMMAND ----------` lines. Every query whose result needs looking at gets
-  its own cell; table-building statements can share a cell.
+- Notebook files are in Databricks source format so Siggie can import them
+  (Workspace > Import > File) without splitting cells by hand: first line
+  `-- Databricks notebook source`, cells separated by
+  `-- COMMAND ----------`, no `%sql` lines. Part D uses this; the Part C file
+  still uses `%sql` cell starts and doesn't import.
+- After the first import, changed cells come in chat as paste-ready `%sql`
+  blocks, with a note saying which cells changed and that nothing else did.
+- Every query whose result needs looking at gets its own cell;
+  table-building statements can share a cell.
 - Pattern for each step: build rules, run a check (should return no rows),
   build decisions, review, then apply with a rerunnable MERGE.
