@@ -537,6 +537,47 @@ ORDER BY greatest(abs(ratio), abs(try_divide(1, ratio))) DESC NULLS FIRST;
 
 
 %sql
+-- 15f. Review: body weight by test, partner and unit. "Body weight" in
+--      [lb_us] converts to median 118 kg vs 90 kg for kg records; this
+--      shows whether that's one partner and whether raw values look like lb.
+SELECT COALESCE(mc.concept_name, k.measurement_source_value) AS test_name,
+       k.data_partner_id, u.concept_code AS unit, k.unit_source_value,
+       k.unit_inference_method, COUNT(*) AS n,
+       percentile_approx(k.value_as_number, array(0.05, 0.5, 0.95)) AS raw_pct,
+       percentile_approx(k.harmonized_value_as_number, array(0.05, 0.5, 0.95)) AS kg_pct
+FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
+LEFT JOIN omop_vocab.concept mc ON mc.concept_id = NULLIF(k.measurement_concept_id, 0)
+LEFT JOIN omop_vocab.concept u  ON u.concept_id = k.effective_unit_concept_id
+WHERE COALESCE(mc.concept_name, k.measurement_source_value) RLIKE '(?i)^body weight'
+GROUP BY 1, 2, 3, 4, 5
+ORDER BY 1, 2, n DESC;
+
+
+%sql
+-- 15g. Review: people with "Body weight" records in both kg and [lb_us].
+--      ratio = person's median converted lb record / median kg record.
+--      Near 1: the lb records are fine and the gap is who gets weighed in
+--      lb. Near 1.3 for everyone: the lb label or factor is wrong.
+WITH w AS (
+  SELECT k.person_id, k.data_partner_id, u.concept_code AS unit,
+         percentile_approx(k.harmonized_value_as_number, 0.5) AS kg
+  FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_keyed k
+  JOIN omop_vocab.concept mc ON mc.concept_id = k.measurement_concept_id
+  JOIN omop_vocab.concept u  ON u.concept_id = k.effective_unit_concept_id
+  WHERE mc.concept_name = 'Body weight'
+    AND u.concept_code IN ('kg', '[lb_us]')
+  GROUP BY 1, 2, 3
+)
+SELECT lb.data_partner_id AS lb_partner, kg.data_partner_id AS kg_partner,
+       COUNT(*) AS n_people,
+       percentile_approx(lb.kg / kg.kg, array(0.05, 0.25, 0.5, 0.75, 0.95)) AS ratio_pct
+FROM w lb
+JOIN w kg ON kg.person_id = lb.person_id AND kg.unit = 'kg'
+WHERE lb.unit = '[lb_us]'
+GROUP BY 1, 2;
+
+
+%sql
 -- ===== C4. Apply conversion decisions =====
 
 -- 16. Apply. Rerunnable. Keys are the same as in the view (14).
