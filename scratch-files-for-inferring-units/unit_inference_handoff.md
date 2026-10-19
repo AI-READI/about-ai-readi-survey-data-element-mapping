@@ -149,6 +149,7 @@ Before anything else, write `E_review_outputs.sql`: a read-only notebook
 (same Databricks source format) holding every check and review query whose
 output is needed to verify the run, in run order, one per cell. Each cell's
 comment should name the source cell it repeats and say what result to expect.
+Copy the queries; they stay in A-D too.
 Siggie runs it once and pastes the outputs back. Expected results:
 
 - the check cells (4b, 7b, 10b, 14a, 14d, 17e): empty
