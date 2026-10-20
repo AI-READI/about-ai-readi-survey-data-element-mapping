@@ -182,7 +182,7 @@ CREATE OR REPLACE TABLE hive_metastore.ehr_union_clean_metrics.unit_analytes AS
 SELECT analyte, priority, pattern, CAST(molar_mass AS DOUBLE) AS molar_mass,
        CAST(charge AS INT) AS charge, note
 FROM VALUES
-  ('hba1c',          1,  '(?i)a1c',                     NULL,   NULL, 'affine bridge in 13b'),
+  ('hba1c',          1,  '(?i)a1c',                     NULL,   NULL, 'affine bridge in 17b'),
   ('urea_nitrogen',  2,  '(?i)urea nitrogen|(?-i:BUN)', 28.014, NULL, 'as N2: mg/dL x 0.357 = mmol/L urea'),
   ('creatinine',     3,  '(?i)creatinine',              113.12, NULL, NULL),
   ('glucose',        4,  '(?i)glucose',                 180.16, NULL, NULL),
@@ -493,7 +493,7 @@ FROM pairs;
 
 -- COMMAND ----------
 -- 19a. Review: summary
-SELECT conversion_method, COUNT(*) AS n_pairs, SUM(n) AS n_records
+SELECT conversion_method, COUNT(*) AS n_groups, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
 GROUP BY 1 ORDER BY n_records DESC;
 
@@ -548,7 +548,7 @@ WHERE p.unit_code <> p.canonical_unit_code OR p.relabeled_as IS NOT NULL;
 
 
 -- COMMAND ----------
--- 19d. Review: (test, unit) pairs with no conversion to the canonical unit.
+-- 19d. Review: (partner, test, unit) with no conversion to the canonical unit.
 --      Compare median_raw with canonical_median to judge what the unit really is.
 SELECT test_name, data_partner_id, unit_code, n, median_raw, canonical_unit_code, canonical_median, analyte
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_medians

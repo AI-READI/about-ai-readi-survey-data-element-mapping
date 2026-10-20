@@ -4,6 +4,9 @@
 -- Per string: hand map first, then reuse the concept the same string
 -- already has elsewhere (exact, then case-insensitive), otherwise
 -- unmapped_string. Only numeric records are touched.
+--
+-- Run after Part A and before Part C (C_unit_inference_no_unit_no_range.sql),
+-- which uses the units assigned here as evidence.
 
 -- 10. Hand map of unit strings. rule = 'unit' | 'unitless' | 'not_a_unit'.
 --     unit_code is the UCUM code as OMOP spells it (checked in 10b).

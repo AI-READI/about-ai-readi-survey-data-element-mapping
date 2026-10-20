@@ -38,6 +38,16 @@ Run in letter order. Cell numbers run on across the parts (Part A ends at
 - [C_unit_inference_no_unit_no_range.sql](C_unit_inference_no_unit_no_range.sql): Part C
   (no unit string, no reference range)
 - [D_unit_conversion.sql](D_unit_conversion.sql): Part D (conversion to canonical units)
+- [E_review_outputs.sql](E_review_outputs.sql): read-only; every check and
+  review needed to verify a full run, copied from A-D (plus E1, records by
+  part and method), each with its expected result. A change to one of those
+  queries in A-D has to be copied here.
+
+[README.md](README.md) is the earlier exploration: the original list of
+diabetes-related tests that were to get inferred units, the target table's
+creation, and sizing queries, in `<details>` blocks. Its first section
+("Target variables") is the starting point for explaining in the write-up
+why the work grew from that list to every numeric record.
 
 ## Done
 
@@ -141,39 +151,17 @@ Numeric records after Parts A-D (cell 20a): 6,534,551 in canonical
 unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
 unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
 
-## Cleanup (do first)
-
-None of these depend on the run results:
-
-- Part D comments still describe some reviews per (test, unit) where they're
-  now per (partner, test, unit), e.g. 19d's header. Read through D's
-  comments for that.
-- Part B's header has no run-order note; A's, C's and D's do. Add one.
-- [README.md](README.md) and [README_big.md](README_big.md) are near-identical
-  (one uses `<details>` blocks) and predate Parts A-D. Ask Siggie whether
-  they're someone else's source material to keep, or whether one or both
-  can go.
-- Read this handoff through for wording left over from earlier versions
-  (text that corrects or argues with what an older draft said). Move such
-  history out or cut it; keep decisions and traps.
-
 ## Next step
 
-Siggie has imported A-D and run them in order, after Parts C and D were
-swapped and Part D became per partner. The run hasn't been verified yet.
-Before anything else, write `E_review_outputs.sql`: a read-only notebook
-(same Databricks source format) holding every check and review query whose
-output is needed to verify the run, in run order, one per cell. Each cell's
-comment should name the source cell it repeats and say what result to expect.
-Copy the queries; they stay in A-D too.
-Siggie runs it once and pastes the outputs back. Expected results:
+A-D have been run in order but not verified. Siggie runs
+[E_review_outputs.sql](E_review_outputs.sql) and pastes every cell's output;
+compare each with the expectation in its comment. The counts above don't
+fully reconcile, and E1 settles them:
 
-- the check cells (4b, 7b, 10b, 14a, 14d, 17e): empty
-- 15d: seven bands, including HDL/total reciprocal with 6,482 records
-- 19e: Body weight, partner 2084, `[lb_us]` -> `[oz_av]`, median about 80.7 kg
-- 20a: the counts above
-- 20b: partner 2084 `[lb_us]` kg median about 80.7 (it was 1,291 before the
-  partner relabel)
+- Part C's per-method counts sum to 1,066,855, 438 more than its 1,066,417
+  total. 438 is the RV/TLC record count (2 x 219).
+- 20a's 5,557 "no unit" is about 550 short of Parts A-C's no-unit counts
+  (A 94, B about 900, C 5,118).
 
 Then the write-up (Not done #3).
 
@@ -198,7 +186,10 @@ Then the write-up (Not done #3).
    - Expiratory minute volume: `L` and `l` rows, 869 each with the same
      median, look like duplicates
    - Tidal volume setting: mL and mL/kg (labeled kg) under one concept
-3. **Write-up for the boss.**
+3. **Write-up for the boss.** Include why the scope went from the original
+   diabetes test list ([README.md](README.md), "Target variables") to every
+   numeric record. Nobody has a record of what was wrong with that list;
+   reconstruct it from the evidence in README.md (its queries and outputs).
 
 ## Gotchas learned
 
@@ -209,7 +200,8 @@ Then the write-up (Not done #3).
   prefixes as powers of ten: `10*-6.[iU]/mL` = uIU/mL, `10*-3.eq/L` = mEq/L,
   `mL/min/(173.10*-2.m2)` = eGFR units, `[lb_us]` = pound.
 - Every hand-written unit code needs a check query against `omop_vocab.concept`
-  (vocabulary_id = 'UCUM', invalid_reason IS NULL); several guesses failed.
+  (vocabulary_id = 'UCUM', invalid_reason IS NULL); codes written from
+  memory are often wrong.
 - In Spark SQL an apostrophe inside a string is `\'`. `''` silently joins two
   strings (`'[APL''U]'` became `[APLU]`).
 - Concept-level rules (e.g. "unitless") apply to every group with that concept.
@@ -231,7 +223,7 @@ Then the write-up (Not done #3).
 - Every query whose result needs looking at gets its own cell;
   table-building statements can share a cell.
 - When several outputs are needed from cells spread across notebooks, put
-  them in one review notebook (like `E_review_outputs.sql`) so Siggie runs
+  them in one review notebook (like [E_review_outputs.sql](E_review_outputs.sql)) so Siggie runs
   one file and pastes everything once.
 - Pattern for each step: build rules, run a check (should return no rows),
   build decisions, review, then apply with a rerunnable MERGE.
