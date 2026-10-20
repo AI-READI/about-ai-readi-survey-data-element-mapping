@@ -163,8 +163,9 @@ A full A-D run with the canonical-unit clearing is verified: every E
 result matched its comment, E2 empty and 20a as above. Comparing it with the
 run before showed ties in max_by flipping canonical units (RA/LV lead pacing
 threshold ms vs V, Spermatozoa Motile, Valproate Free); every pick now has
-a tiebreaker. Siggie reruns A-E once more for the notebooks the boss will
-review; E should match again, apart from row order and those tied tests.
+a tiebreaker. The Databricks notebooks and their outputs are from the run
+before the tiebreakers; the next full run picks them up, and E should match
+again apart from row order and those tied tests.
 
 Then the write-up (Not done #3).
 
