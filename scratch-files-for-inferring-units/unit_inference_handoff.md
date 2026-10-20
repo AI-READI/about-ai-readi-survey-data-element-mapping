@@ -193,7 +193,29 @@ Then the write-up (Not done #3).
 3. **Write-up for the boss.** Include why the scope went from the original
    diabetes test list ([README.md](README.md), "Target variables") to every
    numeric record. Nobody has a record of what was wrong with that list;
-   reconstruct it from the evidence in README.md (its queries and outputs).
+   this is reconstructed from README.md's queries and outputs:
+   - The list's query sorts concepts into 29 categories with `LIKE` on the
+     OMOP concept name, using clinical labels OMOP names don't contain. 14
+     categories match nothing: ALT, AST, total bilirubin, total protein,
+     serum albumin, urine albumin, uACR, random urine creatinine, HDL, LDL,
+     non-HDL, C-peptide, and eGFR and A/G ratio (both caught first by
+     broader patterns, Creatinine and Globulin). BUN's `%bun%` matches only
+     hCG "beta su**bun**it"; real BUN ("Urea nitrogen") isn't in the list.
+   - Matched categories are too broad: Creatinine takes every x/creatinine
+     ratio (arsenic, metanephrine, ...) and all eGFR, Globulin takes
+     thyroglobulin, SHBG and thyroid-stimulating immunoglobulins, Glucose
+     takes G6PD, Calcium takes stone composition and a channel antibody.
+   - The missing units are mostly elsewhere. Of 1,272,255 numeric records
+     with no unit at all, 17,860 (1.4%) are in concepts the list matched;
+     the bulk is flowsheet data (ETCO2, pain scores, tidal volume, heart
+     rate, MAP, BMI). Of 1,327,684 without a unit concept, 33,608 (2.5%).
+   - Inside the list the problems are mostly unit variants that need
+     conversion (mEq/L vs mmol/L, IU/L vs U/L, spellings), plus mislabels
+     (HbA1c in s/co and g/dL, ionized calcium in %). Conversion is
+     dataset-wide anyway: 187 concepts carry more than one unit concept,
+     covering 3.67M records.
+   - Inferring a unit needs other records of the same test as evidence, and
+     once written, the same rules apply to every test.
 
 ## Gotchas learned
 
