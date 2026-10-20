@@ -215,7 +215,7 @@ WITH need AS (
 ),
 s AS (
   SELECT unit_source_value, SUM(n) AS n,
-         max_by(measurement_concept_id, n) AS top_concept_id
+         max_by(measurement_concept_id, struct(n, measurement_concept_id)) AS top_concept_id
   FROM need GROUP BY 1
 ),
 have AS (
@@ -225,11 +225,11 @@ have AS (
   GROUP BY 1, 2
 ),
 reuse_exact AS (
-  SELECT unit_source_value, max_by(unit_concept_id, n) AS unit_concept_id
+  SELECT unit_source_value, max_by(unit_concept_id, struct(n, unit_concept_id)) AS unit_concept_id
   FROM have GROUP BY 1
 ),
 reuse_ci AS (
-  SELECT lower(trim(unit_source_value)) AS k, max_by(unit_concept_id, n) AS unit_concept_id
+  SELECT lower(trim(unit_source_value)) AS k, max_by(unit_concept_id, struct(n, unit_concept_id)) AS unit_concept_id
   FROM have GROUP BY 1
 )
 SELECT s.unit_source_value, s.n,

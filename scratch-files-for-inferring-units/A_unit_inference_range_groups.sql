@@ -154,7 +154,7 @@ SELECT u.data_partner_id, u.measurement_concept_id, u.range_low, u.range_high,
        c.lvl, c.unit_concept_id, c.n_lab, c.med_lab,
        ROW_NUMBER() OVER (
          PARTITION BY u.data_partner_id, u.measurement_concept_id, u.range_low, u.range_high
-         ORDER BY c.lvl, c.n_lab DESC) AS rk
+         ORDER BY c.lvl, c.n_lab DESC, c.unit_concept_id) AS rk
 FROM unl u
 JOIN cand c
   ON  c.measurement_concept_id = u.measurement_concept_id

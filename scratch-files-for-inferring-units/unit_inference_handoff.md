@@ -159,11 +159,12 @@ but no conversion, 11,037 with no unit (A 94, B 6,263, C 4,680).
 
 ## Next step
 
-The first E run verified everything except 20a, which counted 5,472
-Part B unmapped_string records as "in canonical unit": they kept a canonical
-unit from an earlier run, because A's and B's applies didn't clear it. Those
-applies now do. Siggie reruns A, B, C, D and E, and every E result should
-match its comment, E2 empty and 20a as above.
+A full A-D run with the canonical-unit clearing is verified: every E
+result matched its comment, E2 empty and 20a as above. Comparing it with the
+run before showed ties in max_by flipping canonical units (RA/LV lead pacing
+threshold ms vs V, Spermatozoa Motile, Valproate Free); every pick now has
+a tiebreaker. Siggie reruns A-E once more for the notebooks the boss will
+review; E should match again, apart from row order and those tied tests.
 
 Then the write-up (Not done #3).
 
@@ -209,6 +210,9 @@ Then the write-up (Not done #3).
 - Concept-level rules (e.g. "unitless") apply to every group with that concept.
 - Some unit codes in the data aren't valid UCUM (`[degC]`, `mL/min/1.73.m2`).
   Map them with a relabel rule, not a factor row, so the code check stays clean.
+- Every `max_by` / `ROW_NUMBER` pick needs a tiebreaker (the unit code or
+  concept id after the count). Without one, tests with two units of equal
+  count got a different canonical unit on each run.
 - Name patterns are Java regexes with `(?i)` applying to the whole pattern:
   `(?i)BUN` matched "sub**un**it" and `urate` matched "unsat**urate**d". Anchor
   them or use `(?-i:...)`.

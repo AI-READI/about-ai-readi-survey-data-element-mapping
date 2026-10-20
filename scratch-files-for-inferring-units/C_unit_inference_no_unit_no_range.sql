@@ -345,7 +345,7 @@ pick AS (
   SELECT * FROM (
     SELECT g.data_partner_id, g.test_id, c.lvl, c.unit_concept_id, c.n_ev, c.med_ev,
            ROW_NUMBER() OVER (PARTITION BY g.data_partner_id, g.test_id
-                              ORDER BY c.lvl, c.n_ev DESC) AS rk
+                              ORDER BY c.lvl, c.n_ev DESC, c.unit_concept_id) AS rk
     FROM g
     JOIN cand c
       ON  c.test_id = g.test_id

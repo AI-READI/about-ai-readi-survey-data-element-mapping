@@ -423,14 +423,16 @@ cls AS (
   LEFT JOIN hive_metastore.ehr_union_clean_metrics.unit_factors f ON f.unit_code = r.conv_code
   WHERE NOT r.blocked
 ),
+-- max_by keys include the code so ties in n resolve the same way every run
 cls_n AS (
   SELECT test_id, class_key, SUM(n) AS n,
-         max_by(conv_code, n) AS top_code, max_by(unit_concept_id, n) AS top_unit_concept_id
+         max_by(conv_code, struct(n, conv_code, unit_concept_id)) AS top_code,
+         max_by(unit_concept_id, struct(n, conv_code, unit_concept_id)) AS top_unit_concept_id
   FROM cls GROUP BY 1, 2
 ),
 most_common AS (
-  SELECT test_id, max_by(top_code, n) AS unit_code,
-         max_by(top_unit_concept_id, n) AS unit_concept_id
+  SELECT test_id, max_by(top_code, struct(n, top_code, top_unit_concept_id)) AS unit_code,
+         max_by(top_unit_concept_id, struct(n, top_code, top_unit_concept_id)) AS unit_concept_id
   FROM cls_n GROUP BY 1
 ),
 rule AS (
