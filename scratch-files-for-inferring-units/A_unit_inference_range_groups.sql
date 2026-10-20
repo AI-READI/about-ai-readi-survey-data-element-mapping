@@ -16,8 +16,10 @@
 --           unitless, suspect_concept, needs_review, no_concept
 --   Part B: mapped_string, reused_mapping, unitless, not_a_unit, unmapped_string
 --
--- canonical_unit_* and harmonized_value_as_number are filled in Part D;
--- only unitless records get harmonized_value_as_number here.
+-- canonical_unit_concept_id and harmonized_value_as_number are filled in
+-- Part D; only unitless records get harmonized_value_as_number here. Every
+-- apply (A, B, C) clears canonical_unit_concept_id on the records it writes,
+-- so a rerun of any part needs a rerun of Part D after it.
 --
 -- Things learned the hard way:
 --   * OMOP UCUM codes write international units as [iU] (lowercase i), and
@@ -256,6 +258,7 @@ WHEN MATCHED THEN UPDATE SET
   t.unit_inference_method      = d.unit_inference_method,
   t.inferred_unit_concept_id   = d.inferred_unit_concept_id,
   t.inferred_unit_source_value = d.unit_code,
+  t.canonical_unit_concept_id  = NULL,
   t.harmonized_value_as_number = CASE WHEN d.unit_inference_method = 'unitless'
                                       THEN t.value_as_number END;
 
@@ -403,5 +406,6 @@ WHEN MATCHED THEN UPDATE SET
   t.unit_inference_method      = d.unit_inference_method,
   t.inferred_unit_concept_id   = d.inferred_unit_concept_id,
   t.inferred_unit_source_value = d.inferred_unit,
+  t.canonical_unit_concept_id  = NULL,
   t.harmonized_value_as_number = CASE WHEN d.unit_inference_method = 'unitless'
                                       THEN t.value_as_number END;

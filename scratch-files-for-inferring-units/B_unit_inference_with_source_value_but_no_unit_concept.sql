@@ -291,5 +291,6 @@ WHEN MATCHED THEN UPDATE SET
   t.unit_inference_method      = d.unit_inference_method,
   t.inferred_unit_concept_id   = d.inferred_unit_concept_id,
   t.inferred_unit_source_value = d.unit_code,
+  t.canonical_unit_concept_id  = NULL,
   t.harmonized_value_as_number = CASE WHEN d.unit_inference_method = 'unitless'
                                       THEN t.value_as_number END;

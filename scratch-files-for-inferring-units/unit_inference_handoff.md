@@ -15,6 +15,8 @@ unit (or is marked unitless), a canonical unit, and a harmonized value.
     `harmonized_value_as_number` is in it (NULL for unitless records)
   - `harmonized_value_as_number`: value in the canonical unit, or
     value_as_number for unitless records
+  - `canonical_unit_value`: created with the table
+    ([README.md](README.md), "Target output table") and never filled
 - Original `unit_concept_id` / `unit_source_value` are left untouched. A record's
   effective unit is `COALESCE(NULLIF(unit_concept_id, 0), inferred_unit_concept_id)`.
 
@@ -40,7 +42,8 @@ Run in letter order. Cell numbers run on across the parts (Part A ends at
 - [D_unit_conversion.sql](D_unit_conversion.sql): Part D (conversion to canonical units)
 - [E_review_outputs.sql](E_review_outputs.sql): read-only; every check and
   review needed to verify a full run, copied from A-D (plus E1, records by
-  part and method), each with its expected result. A change to one of those
+  part and method, and E2, stale canonical units), each with its expected
+  result. A change to one of those
   queries in A-D has to be copied here.
 
 [README.md](README.md) is the earlier exploration: the original list of
@@ -74,9 +77,10 @@ records, 223 strings.
 | reused_mapping | same string already maps to a concept elsewhere in the table |
 | unitless | {ratio}, Index, S/CO, ISR, z-scores, etc. |
 | not_a_unit | junk in the unit field ("Possible", "**Please", "PharmD", "Urine") |
-| unmapped_string | left on purpose (~45 strings: log viral loads, FLU, CU, per-ejaculate counts) |
+| unmapped_string | left on purpose (58 strings: log viral loads, FLU, CU, per-ejaculate counts) |
 
-About 900 records remain without a unit (not_a_unit plus unmapped_string).
+Result: 55,429 records; 49,089 got a unit (mapped_string, reused_mapping),
+77 unitless, 6,263 without a unit (5,988 unmapped_string, 275 not_a_unit).
 
 **Part C.** Numeric records with no unit string, no unit concept and no
 reference range: 1,066,417 records, almost all from one partner, mostly
@@ -106,7 +110,7 @@ marks that concept's Part A records suspect_concept. SVR is `dyn.sec/cm5` (32703
 
 Result: 510,927 explicit, 476,218 unitless (6,482 of them reciprocal),
 73,887 copied, 365 source_name, 3,794 not_a_quantity, 225 suspect_concept
-(TLC under RV/TLC), 1,099 needs_review, 340 value_split.
+(TLC under RV/TLC), 661 needs_review, 340 value_split.
 
 **Part D.** Conversion to a canonical unit per test. A test is the measurement
 concept, or the measurement_source_value for concept 0.
@@ -143,31 +147,29 @@ concept, or the measurement_source_value for concept 0.
 | blocked | relabel rule says don't convert |
 
 Run order is A, B, C, D. Part C uses units from A and B as evidence, and
-Part D converts the units all three assign. Part C's apply clears
-canonical_unit_concept_id and the harmonized value on its records, so a Part C
-re-run always needs a Part D re-run after it.
+Part D converts the units all three assign. Every apply (cells 6, 9, 12, 16)
+clears canonical_unit_concept_id and the harmonized value on the records it
+writes, so a rerun of any part needs a Part D rerun after it. D's apply
+touches only records with a unit, so without that clearing a record whose
+unit was taken away keeps a stale canonical unit (E2 checks for this).
 
-Numeric records after Parts A-D (cell 20a): 6,534,551 in canonical
-unit, 509,257 unitless, 3,191 with a unit but no conversion, 5,557 with no
-unit (needs_review, not_a_quantity, suspect_concept, Part B leftovers).
+Numeric records after Parts A-D (cell 20a, expected once the clearing fix
+has run): 6,529,079 in canonical unit, 509,251 unitless, 3,189 with a unit
+but no conversion, 11,037 with no unit (A 94, B 6,263, C 4,680).
 
 ## Next step
 
-A-D have been run in order but not verified. Siggie runs
-[E_review_outputs.sql](E_review_outputs.sql) and pastes every cell's output;
-compare each with the expectation in its comment. The counts above don't
-fully reconcile, and E1 settles them:
-
-- Part C's per-method counts sum to 1,066,855, 438 more than its 1,066,417
-  total. 438 is the RV/TLC record count (2 x 219).
-- 20a's 5,557 "no unit" is about 550 short of Parts A-C's no-unit counts
-  (A 94, B about 900, C 5,118).
+The first E run verified everything except 20a, which counted 5,472
+Part B unmapped_string records as "in canonical unit": they kept a canonical
+unit from an earlier run, because A's and B's applies didn't clear it. Those
+applies now do. Siggie reruns A, B, C, D and E, and every E result should
+match its comment, E2 empty and 20a as above.
 
 Then the write-up (Not done #3).
 
 ## Not done
 
-1. **Part C leftovers** still needs_review (1,099 records): log viral
+1. **Part C leftovers** still needs_review (661 records): log viral
    loads (left unmapped, as in Part B), Treadmill MPH (28; OMOP UCUM has no
    mile per hour), and tests with no rule yet: Creatinine/Protein [Mass
    Ratio] in Urine (94, median 235, looks like protein/creatinine mg/g),

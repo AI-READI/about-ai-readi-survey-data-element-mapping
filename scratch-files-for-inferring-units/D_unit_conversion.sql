@@ -32,9 +32,9 @@
 -- canonical_unit_concept_id is set only where harmonized_value_as_number is,
 -- so a non-null harmonized value is always in canonical_unit_concept_id.
 --
--- Run after Parts A, B and C, which assign the units converted here (Part C's
--- apply also clears canonical_unit_concept_id and the harmonized value on its
--- records). Run every cell in order; cells that end in a SELECT show a
+-- Run after Parts A, B and C, which assign the units converted here (their
+-- applies also clear canonical_unit_concept_id and the harmonized value on
+-- their records). Run every cell in order; cells that end in a SELECT show a
 -- result, the others build tables.
 
 

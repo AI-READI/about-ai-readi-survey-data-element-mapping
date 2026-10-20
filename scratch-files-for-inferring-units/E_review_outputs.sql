@@ -5,9 +5,9 @@
 -- and paste back every cell's result. Each cell repeats a check or review
 -- query from A-D (named in its comment, which also says what to expect);
 -- the queries stay in A-D too, so a change there has to be copied here.
--- Cell E1 is the only query that isn't in A-D.
+-- Cells E1 and E2 are the only queries that aren't in A-D.
 --
--- Checks (should be empty): 4b, 7b, 10b, 14a, 14d, 17e.
+-- Checks (should be empty): 4b, 7b, 10b, 14a, 14d, 17e, E2.
 
 
 -- COMMAND ----------
@@ -70,8 +70,8 @@ WHERE m.rule = 'unit' AND ru.concept_id IS NULL;
 -- COMMAND ----------
 
 -- 11b (Part B, cell B2). Review: unit-string decisions by method.
---      Expect: about 223 strings and 55,000 records; not_a_unit plus
---      unmapped_string about 900 records.
+--      Expect: 223 strings, 55,429 records; unmapped_string 58 strings
+--      (5,988 records), not_a_unit 18 (275).
 SELECT unit_inference_method, COUNT(*) AS n_strings, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_string_decisions
 GROUP BY 1 ORDER BY n_records DESC;
@@ -122,8 +122,8 @@ SELECT * FROM (
 
 -- 15a (Part C). Review: Part C decisions by method, per (partner, test),
 --      before 16 splits value_split groups into bands.
---      Expect: explicit about 510,927; total 1,066,417. E1 has the
---      per-record counts after the split.
+--      Expect: explicit 510,927; needs_review 661; value_split 7,047;
+--      total 1,066,417. E1 has the per-record counts after the split.
 SELECT unit_inference_method, COUNT(*) AS n_groups, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_no_range_decisions
 GROUP BY 1
@@ -211,7 +211,7 @@ ORDER BY r.test_pattern, n DESC;
 
 -- 19a (Part D). Review: conversion decisions by method.
 --      Expect: identity and same_base hold nearly all records;
---      no_conversion plus blocked about 3,191 (20a's "has unit, no conversion").
+--      no_conversion 3,185 plus blocked 4 = 20a's "has unit, no conversion".
 SELECT conversion_method, COUNT(*) AS n_groups, SUM(n) AS n_records
 FROM hive_metastore.ehr_union_clean_metrics.unit_conversion_decisions
 GROUP BY 1 ORDER BY n_records DESC;
@@ -241,8 +241,8 @@ ORDER BY greatest(abs(ratio), abs(try_divide(1, ratio))) DESC NULLS FIRST;
 -- COMMAND ----------
 
 -- 20a (Part D). Review: numeric records by harmonization status.
---      Expect: in canonical unit 6,534,551; unitless 509,257; has unit, no
---      conversion 3,191; no unit 5,557.
+--      Expect: in canonical unit 6,529,079; unitless 509,251; has unit, no
+--      conversion 3,189; no unit 11,037 (E1's no-unit methods).
 SELECT CASE WHEN canonical_unit_concept_id IS NOT NULL  THEN 'in canonical unit'
             WHEN harmonized_value_as_number IS NOT NULL THEN 'unitless'
             WHEN COALESCE(NULLIF(unit_concept_id, 0), inferred_unit_concept_id) IS NOT NULL
@@ -264,11 +264,12 @@ GROUP BY 1 ORDER BY n DESC;
 --      A: total 205,838; the unit methods (dataset_unit, partner_unit,
 --         range_match, explicit, source_name) 172,788; unitless 32,956;
 --         suspect_concept 88; needs_review plus no_concept 6
---      B: total about 55,000; not_a_unit plus unmapped_string about 900
+--      B: total 55,429; mapped_string 49,073; unmapped_string 5,988;
+--         not_a_unit 275; unitless 77; reused_mapping 16
 --      C: total 1,066,417; explicit 510,927; unitless plus reciprocal
 --         476,218 (reciprocal 6,482); partner_unit plus dataset_unit 73,887;
 --         source_name 365; not_a_quantity 3,794; suspect_concept 225;
---         needs_review 1,099; value_split 340
+--         needs_review 661; value_split 340
 SELECT CASE WHEN COALESCE(unit_concept_id, 0) <> 0 THEN 'has unit concept'
             WHEN unit_source_value IS NOT NULL      THEN 'B'
             WHEN range_high IS NOT NULL             THEN 'A'
@@ -280,6 +281,18 @@ FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized
 WHERE value_as_number IS NOT NULL
 GROUP BY 1, 2
 ORDER BY 1, n DESC;
+
+-- COMMAND ----------
+
+-- E2 (new, not in A-D). Check: records with a canonical unit but no
+--    harmonized value. Part D sets the two together, and every apply clears
+--    the canonical unit, so this catches stale values from an earlier run.
+--    Expect: no rows.
+SELECT unit_inference_method, COUNT(*) AS n
+FROM hive_metastore.ehr_union_clean_metrics.measurement_unit_harmonized
+WHERE canonical_unit_concept_id IS NOT NULL
+  AND harmonized_value_as_number IS NULL
+GROUP BY 1;
 
 -- COMMAND ----------
 
