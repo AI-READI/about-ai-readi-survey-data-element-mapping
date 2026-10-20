@@ -190,10 +190,13 @@ Then the write-up (Not done #3).
    - Expiratory minute volume: `L` and `l` rows, 869 each with the same
      median, look like duplicates
    - Tidal volume setting: mL and mL/kg (labeled kg) under one concept
-3. **Write-up for the boss.** Include why the scope went from the original
-   diabetes test list ([README.md](README.md), "Target variables") to every
-   numeric record. Nobody has a record of what was wrong with that list;
-   this is reconstructed from README.md's queries and outputs:
+3. **Write-up for the boss**: drafted as
+   [unit_harmonization_summary.md](unit_harmonization_summary.md), charts from
+   [charts/make_charts.py](charts/make_charts.py) (counts copied from the E
+   run). Its scope section rests on this evidence about the original
+   diabetes test list ([README.md](README.md), "Target variables"), which
+   nobody has a record of; it's reconstructed from README.md's queries and
+   outputs:
    - The list's query sorts concepts into 29 categories with `LIKE` on the
      OMOP concept name, using clinical labels OMOP names don't contain. 14
      categories match nothing: ALT, AST, total bilirubin, total protein,
@@ -212,8 +215,9 @@ Then the write-up (Not done #3).
    - Inside the list the problems are mostly unit variants that need
      conversion (mEq/L vs mmol/L, IU/L vs U/L, spellings), plus mislabels
      (HbA1c in s/co and g/dL, ionized calcium in %). Conversion is
-     dataset-wide anyway: 187 concepts carry more than one unit concept,
-     covering 3.67M records.
+     dataset-wide anyway: about 1.01M records needed converting (19a).
+     (README's sizing query counts unit concept 0 as a unit, so its
+     "concepts with several units" figure overstates.)
    - Inferring a unit needs other records of the same test as evidence, and
      once written, the same rules apply to every test.
 
